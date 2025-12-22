@@ -1349,7 +1349,8 @@ if [ $USE_OPENSSL_QUIC = YES ]; then
                      src/event/quic/ngx_event_quic_ack.h \
                      src/event/quic/ngx_event_quic_output.h \
                      src/event/quic/ngx_event_quic_socket.h \
-                     src/event/quic/ngx_event_quic_openssl_compat.h"
+                     src/event/quic/ngx_event_quic_openssl_compat.h \
+                     src/event/quic/ngx_event_quic_qlog.h"
     ngx_module_srcs="src/event/quic/ngx_event_quic.c \
                      src/event/quic/ngx_event_quic_udp.c \
                      src/event/quic/ngx_event_quic_transport.c \
@@ -1363,7 +1364,8 @@ if [ $USE_OPENSSL_QUIC = YES ]; then
                      src/event/quic/ngx_event_quic_ack.c \
                      src/event/quic/ngx_event_quic_output.c \
                      src/event/quic/ngx_event_quic_socket.c \
-                     src/event/quic/ngx_event_quic_openssl_compat.c"
+                     src/event/quic/ngx_event_quic_openssl_compat.c \
+                     src/event/quic/ngx_event_quic_qlog.c"
 
     ngx_module_libs=
     ngx_module_link=YES

@@ -8,6 +8,7 @@
 #include <ngx_core.h>
 #include <ngx_event.h>
 #include <ngx_event_quic_connection.h>
+#include <ngx_event_quic_qlog.h>
 
 
 #define NGX_QUIC_MAX_UDP_SEGMENT_BUF  65487 /* 65K - IPv6 header */
@@ -569,6 +570,8 @@ ngx_quic_output_packet(ngx_connection_t *c, ngx_quic_send_ctx_t *ctx,
 
     ngx_quic_init_packet(c, ctx, &pkt, qc->path);
 
+    ngx_quic_qlog_pkt_sent_start(c, qc);
+
     min_payload = ngx_quic_payload_size(&pkt, min);
     max_payload = ngx_quic_payload_size(&pkt, max);
 
@@ -620,6 +623,7 @@ ngx_quic_output_packet(ngx_connection_t *c, ngx_quic_send_ctx_t *ctx,
         f->plen = 0;
 
         ngx_quic_log_frame(c->log, f, 1);
+        ngx_quic_qlog_write_frame(c, qc, f);
 
         flen = ngx_quic_create_frame(p, f);
         if (flen == -1) {
@@ -651,6 +655,9 @@ ngx_quic_output_packet(ngx_connection_t *c, ngx_quic_send_ctx_t *ctx,
     if (ngx_quic_encrypt(&pkt, &res) != NGX_OK) {
         return NGX_ERROR;
     }
+
+    pkt.len = res.len;
+    ngx_quic_qlog_pkt_sent_end(c, qc, &pkt);
 
     ctx->pnum++;
 

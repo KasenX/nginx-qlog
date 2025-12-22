@@ -8,6 +8,7 @@
 #include <ngx_core.h>
 #include <ngx_event.h>
 #include <ngx_event_quic_connection.h>
+#include <ngx_event_quic_qlog.h>
 
 
 /*
@@ -291,6 +292,8 @@ ngx_quic_cbs_got_transport_params(ngx_ssl_conn_t *ssl_conn,
         return 1;
     }
 
+    ngx_quic_qlog_parameters_set(c, qc, &ctp, NGX_QUIC_QLOG_SIDE_REMOTE);
+
     if (ngx_quic_apply_transport_params(c, &ctp) != NGX_OK) {
         return 1;
     }
@@ -547,6 +550,8 @@ ngx_quic_add_handshake_data(ngx_ssl_conn_t *ssl_conn,
 
             return 1;
         }
+
+        ngx_quic_qlog_parameters_set(c, qc, &ctp, NGX_QUIC_QLOG_SIDE_REMOTE);
 
         if (ngx_quic_apply_transport_params(c, &ctp) != NGX_OK) {
             return 1;

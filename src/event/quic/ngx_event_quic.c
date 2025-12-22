@@ -8,6 +8,7 @@
 #include <ngx_core.h>
 #include <ngx_event.h>
 #include <ngx_event_quic_connection.h>
+#include <ngx_event_quic_qlog.h>
 
 
 static ngx_quic_connection_t *ngx_quic_new_connection(ngx_connection_t *c,
@@ -345,6 +346,13 @@ ngx_quic_new_connection(ngx_connection_t *c, ngx_quic_conf_t *conf,
 
     c->idle = 1;
     ngx_reusable_connection(c, 1);
+
+    if (ngx_quic_qlog_init(c, qc) == NGX_ERROR) {
+        /* TODO: probably don't terminate */
+        return NULL;
+    }
+
+    ngx_quic_qlog_parameters_set(c, qc, &qc->tp, NGX_QUIC_QLOG_SIDE_LOCAL);
 
     ngx_log_debug0(NGX_LOG_DEBUG_EVENT, c->log, 0,
                    "quic connection created");
@@ -1066,27 +1074,27 @@ ngx_quic_handle_payload(ngx_connection_t *c, ngx_quic_header_t *pkt)
 
     c->log->action = "handling payload";
 
-    if (pkt->level != NGX_QUIC_ENCRYPTION_APPLICATION) {
-        return ngx_quic_handle_frames(c, pkt);
+    if (pkt->level == NGX_QUIC_ENCRYPTION_APPLICATION && pkt->key_update) {
+        /* switch keys and generate next on Key Phase change */
+
+        qc->key_phase ^= 1;
+        ngx_quic_keys_switch(c, qc->keys);
     }
 
-    if (!pkt->key_update) {
-        return ngx_quic_handle_frames(c, pkt);
-    }
-
-    /* switch keys and generate next on Key Phase change */
-
-    qc->key_phase ^= 1;
-    ngx_quic_keys_switch(c, qc->keys);
+    ngx_quic_qlog_pkt_received_start(c, qc);
 
     rc = ngx_quic_handle_frames(c, pkt);
-    if (rc != NGX_OK) {
-        return rc;
+
+    ngx_quic_qlog_pkt_received_end(c, qc, pkt);
+
+    if (rc == NGX_OK &&
+        pkt->level == NGX_QUIC_ENCRYPTION_APPLICATION &&
+        pkt->key_update)
+    {
+        ngx_post_event(&qc->key_update, &ngx_posted_events);
     }
 
-    ngx_post_event(&qc->key_update, &ngx_posted_events);
-
-    return NGX_OK;
+    return rc;
 }
 
 
@@ -1209,6 +1217,7 @@ ngx_quic_handle_frames(ngx_connection_t *c, ngx_quic_header_t *pkt)
         }
 
         ngx_quic_log_frame(c->log, &frame, 0);
+        ngx_quic_qlog_write_frame(c, qc, &frame);
 
         c->log->action = "handling frames";
 

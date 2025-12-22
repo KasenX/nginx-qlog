@@ -78,6 +78,34 @@ static ngx_command_t  ngx_http_v3_commands[] = {
       offsetof(ngx_http_v3_srv_conf_t, quic.active_connection_id_limit),
       NULL },
 
+    { ngx_string("quic_qlog"),
+    NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_CONF_FLAG,
+    ngx_conf_set_flag_slot,
+    NGX_HTTP_SRV_CONF_OFFSET,
+    offsetof(ngx_http_v3_srv_conf_t, quic.qlog_enabled),
+    NULL },
+
+    { ngx_string("quic_qlog_path"),
+    NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_CONF_TAKE1,
+    ngx_conf_set_str_slot,
+    NGX_HTTP_SRV_CONF_OFFSET,
+    offsetof(ngx_http_v3_srv_conf_t, quic.qlog_path),
+    NULL },
+
+    { ngx_string("quic_qlog_sample"),
+    NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_CONF_TAKE1,
+    ngx_conf_set_num_slot,
+    NGX_HTTP_SRV_CONF_OFFSET,
+    offsetof(ngx_http_v3_srv_conf_t, quic.qlog_sample_n),
+    NULL },
+
+    { ngx_string("quic_qlog_max_size"),
+    NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_CONF_TAKE1,
+    ngx_conf_set_size_slot,
+    NGX_HTTP_SRV_CONF_OFFSET,
+    offsetof(ngx_http_v3_srv_conf_t, quic.qlog_max_size),
+    NULL },
+
       ngx_null_command
 };
 
@@ -194,6 +222,7 @@ ngx_http_v3_create_srv_conf(ngx_conf_t *cf)
      *     h3scf->quic.disable_active_migration = 0;
      *     h3scf->quic.idle_timeout = 0;
      *     h3scf->max_blocked_streams = 0;
+     *     h3scf->quic.qlog_path = { 0, NULL }
      */
 
     h3scf->enable = NGX_CONF_UNSET;
@@ -209,6 +238,10 @@ ngx_http_v3_create_srv_conf(ngx_conf_t *cf)
     h3scf->quic.stream_close_code = NGX_HTTP_V3_ERR_NO_ERROR;
     h3scf->quic.stream_reject_code_bidi = NGX_HTTP_V3_ERR_REQUEST_REJECTED;
     h3scf->quic.active_connection_id_limit = NGX_CONF_UNSET_UINT;
+
+    h3scf->quic.qlog_enabled = NGX_CONF_UNSET;
+    h3scf->quic.qlog_sample_n = NGX_CONF_UNSET_UINT;
+    h3scf->quic.qlog_max_size = NGX_CONF_UNSET_UINT;
 
     h3scf->quic.init = ngx_http_v3_init;
     h3scf->quic.shutdown = ngx_http_v3_shutdown;
@@ -249,6 +282,17 @@ ngx_http_v3_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
     ngx_conf_merge_uint_value(conf->quic.active_connection_id_limit,
                               prev->quic.active_connection_id_limit,
                               2);
+
+    ngx_conf_merge_value(conf->quic.qlog_enabled, prev->quic.qlog_enabled, 0);
+    ngx_conf_merge_str_value(conf->quic.qlog_path, prev->quic.qlog_path, "");
+    ngx_conf_merge_uint_value(conf->quic.qlog_sample_n, prev->quic.qlog_sample_n, 1);
+    ngx_conf_merge_size_value(conf->quic.qlog_max_size, prev->quic.qlog_max_size, 0);
+
+    if (conf->quic.qlog_enabled && conf->quic.qlog_path.len == 0) {
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                           "quic_qlog enabled but quic_qlog_path is not set");
+        return NGX_CONF_ERROR;
+    }
 
     if (conf->quic.host_key.len == 0) {
 

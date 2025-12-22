@@ -94,6 +94,11 @@ typedef struct {
     ngx_int_t                      stream_reject_code_uni;
     ngx_int_t                      stream_reject_code_bidi;
 
+    ngx_flag_t                     qlog_enabled;
+    ngx_str_t                      qlog_path;
+    ngx_uint_t                     qlog_sample_n;
+    size_t                         qlog_max_size;
+
     ngx_quic_init_pt               init;
     ngx_quic_shutdown_pt           shutdown;
 
