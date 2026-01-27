@@ -11,6 +11,18 @@
 #include <ngx_config.h>
 #include <ngx_core.h>
 
+/* RFC 9002, 6.1.1. Packet Threshold: kPacketThreshold */
+#define NGX_QUIC_PKT_THR                     3 /* packets */
+/* RFC 9002, 6.1.2. Time Threshold: kGranularity */
+#define NGX_QUIC_TIME_GRANULARITY            1 /* ms */
+
+/* RFC 9002, 7.6.1. Duration: kPersistentCongestionThreshold */
+#define NGX_QUIC_PERSISTENT_CONGESTION_THR   3
+
+/* CUBIC parameters x10 */
+#define NGX_QUIC_CUBIC_BETA                  7
+#define NGX_QUIC_CUBIC_C                     4
+
 
 ngx_int_t ngx_quic_handle_ack_frame(ngx_connection_t *c,
     ngx_quic_header_t *pkt, ngx_quic_frame_t *f);

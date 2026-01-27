@@ -13,18 +13,6 @@
 
 #define NGX_QUIC_MAX_ACK_GAP                 2
 
-/* RFC 9002, 6.1.1. Packet Threshold: kPacketThreshold */
-#define NGX_QUIC_PKT_THR                     3 /* packets */
-/* RFC 9002, 6.1.2. Time Threshold: kGranularity */
-#define NGX_QUIC_TIME_GRANULARITY            1 /* ms */
-
-/* RFC 9002, 7.6.1. Duration: kPersistentCongestionThreshold */
-#define NGX_QUIC_PERSISTENT_CONGESTION_THR   3
-
-/* CUBIC parameters x10 */
-#define NGX_QUIC_CUBIC_BETA                  7
-#define NGX_QUIC_CUBIC_C                     4
-
 
 /* send time of ACK'ed packets */
 typedef struct {

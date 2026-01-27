@@ -229,6 +229,59 @@ ngx_quic_qlog_parameters_set(ngx_connection_t *c, ngx_quic_connection_t *qc,
     ngx_quic_qlog_write_buf(c, qlog, buf, p - buf);
 }
 
+void
+ngx_quic_qlog_recovery_parameters_set(ngx_connection_t *c,
+    ngx_quic_connection_t *qc)
+{
+    u_char           *p, *end;
+    uint64_t          timestamp;
+    ngx_quic_qlog_t  *qlog;
+    size_t            max_datagram_size;
+    uint64_t          min_cwnd;
+    u_char            buf[1024];
+
+    qlog = qc->qlog;
+
+    if (qlog == NULL || qlog->closed) {
+        return;
+    }
+
+    max_datagram_size = qc->path ? qc->path->mtu : qc->congestion.mtu;
+    min_cwnd = 2 * (uint64_t) max_datagram_size;
+
+    p = buf;
+    end = buf + sizeof(buf);
+
+    timestamp = ngx_quic_qlog_now(qlog);
+
+    ngx_qlog_write(p, end, "\x1e{\"time\":%uL,\"name\":"
+                   "\"recovery:parameters_set\",\"data\":{", timestamp);
+    ngx_qlog_write_pair_num(p, end, "reordering_threshold", NGX_QUIC_PKT_THR);
+    *p++ = ',';
+    ngx_qlog_write_pair(p, end, "time_threshold", "%.3f", 1.125);
+    *p++ = ',';
+    ngx_qlog_write_pair_num(p, end, "timer_granularity",
+                            NGX_QUIC_TIME_GRANULARITY);
+    *p++ = ',';
+    ngx_qlog_write_pair_num(p, end, "initial_rtt", NGX_QUIC_INITIAL_RTT);
+    *p++ = ',';
+    ngx_qlog_write_pair_num(p, end, "max_datagram_size", max_datagram_size);
+    *p++ = ',';
+    ngx_qlog_write_pair_num(p, end, "initial_congestion_window",
+                            qc->congestion.window);
+    *p++ = ',';
+    ngx_qlog_write_pair_num(p, end, "minimum_congestion_window", min_cwnd);
+    *p++ = ',';
+    ngx_qlog_write_pair(p, end, "loss_reduction_factor", "%.3f",
+                        (double) NGX_QUIC_CUBIC_BETA / 10.0);
+    *p++ = ',';
+    ngx_qlog_write_pair_num(p, end, "persistent_congestion_threshold",
+                            NGX_QUIC_PERSISTENT_CONGESTION_THR);
+    ngx_qlog_write_literal(p, "}}\n");
+
+    ngx_quic_qlog_write_buf(c, qlog, buf, p - buf);
+}
+
 
 void
 ngx_quic_qlog_metrics_updated(ngx_connection_t *c, ngx_quic_connection_t *qc)

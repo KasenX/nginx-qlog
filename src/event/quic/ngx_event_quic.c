@@ -353,6 +353,7 @@ ngx_quic_new_connection(ngx_connection_t *c, ngx_quic_conf_t *conf,
     }
 
     ngx_quic_qlog_parameters_set(c, qc, &qc->tp, NGX_QUIC_QLOG_SIDE_LOCAL);
+    ngx_quic_qlog_recovery_parameters_set(c, qc);
 
     ngx_log_debug0(NGX_LOG_DEBUG_EVENT, c->log, 0,
                    "quic connection created");

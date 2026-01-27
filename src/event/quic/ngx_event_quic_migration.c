@@ -192,6 +192,7 @@ valid:
 
         ngx_quic_init_rtt(qc);
 
+        ngx_quic_qlog_recovery_parameters_set(c, qc);
         ngx_quic_qlog_metrics_updated(c, qc);
     }
 
@@ -976,8 +977,11 @@ ngx_int_t
 ngx_quic_handle_path_mtu(ngx_connection_t *c, ngx_quic_path_t *path,
     uint64_t min, uint64_t max)
 {
-    uint64_t    pnum;
-    ngx_uint_t  i;
+    uint64_t                pnum;
+    ngx_uint_t              i;
+    ngx_quic_connection_t  *qc;
+
+    qc = ngx_quic_get_connection(c);
 
     if (path->state != NGX_QUIC_PATH_MTUD) {
         return NGX_OK;
@@ -1000,6 +1004,7 @@ ngx_quic_handle_path_mtu(ngx_connection_t *c, ngx_quic_path_t *path,
                        "quic path seq:%uL ack mtu:%uz",
                        path->seqnum, path->mtu);
 
+        ngx_quic_qlog_recovery_parameters_set(c, qc);
         ngx_quic_discover_path_mtu(c, path);
 
         break;
