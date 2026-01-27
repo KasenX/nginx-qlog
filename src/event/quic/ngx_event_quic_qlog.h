@@ -24,6 +24,8 @@ struct ngx_quic_qlog_s {
     u_char    *last;
     u_char    *end;
 
+    ngx_msec_t start_time;
+
     size_t     bytes_written;
     size_t     max_size;
 

@@ -31,6 +31,12 @@
 #define ngx_qlog_write_pair_duration(p, end, key, val)                       \
     ngx_qlog_write_pair(p, end, key, "%M", val)
 
+static ngx_inline uint64_t
+ngx_quic_qlog_now(ngx_quic_qlog_t *qlog)
+{
+    return (uint64_t) (ngx_current_msec - qlog->start_time);
+}
+
 
 static ngx_int_t ngx_quic_qlog_open(ngx_connection_t *c,
     ngx_quic_connection_t *qc);
@@ -41,7 +47,7 @@ static void ngx_quic_qlog_write_end(ngx_connection_t *c,
 static ngx_int_t ngx_quic_qlog_write_buf(ngx_connection_t *c,
     ngx_quic_qlog_t *qlog, u_char *buf, size_t size);
 static ngx_int_t ngx_quic_qlog_write_header(ngx_connection_t *c,
-    ngx_quic_connection_t *qc);
+    ngx_quic_connection_t *qc, uint64_t reference_time_ms);
 static const char *ngx_quic_qlog_packet_name(uint8_t flags);
 static u_char *ngx_quic_qlog_padding_frame(u_char *p, u_char *end,
     ngx_quic_frame_t *f);
@@ -88,6 +94,9 @@ static u_char *ngx_quic_qlog_handshake_done_frame(u_char *p, u_char *end,
 ngx_int_t
 ngx_quic_qlog_init(ngx_connection_t *c, ngx_quic_connection_t *qc)
 {
+    uint64_t     reference_time_ms;
+    ngx_time_t  *tp;
+
     if (!qc->conf->qlog_enabled) {
         return NGX_DECLINED;
     }
@@ -108,7 +117,11 @@ ngx_quic_qlog_init(ngx_connection_t *c, ngx_quic_connection_t *qc)
         return NGX_ERROR;
     }
 
-    if (ngx_quic_qlog_write_header(c, qc) != NGX_OK) {
+    tp = ngx_timeofday();
+    reference_time_ms = (uint64_t) tp->sec * 1000 + tp->msec;
+    qc->qlog->start_time = ngx_current_msec;
+
+    if (ngx_quic_qlog_write_header(c, qc, reference_time_ms) != NGX_OK) {
         ngx_close_file(qc->qlog->fd);
         qc->qlog->fd = NGX_INVALID_FILE;
         qc->qlog->closed = 1;
@@ -140,7 +153,6 @@ ngx_quic_qlog_parameters_set(ngx_connection_t *c, ngx_quic_connection_t *qc,
 {
     u_char           *p, *end;
     uint64_t          timestamp;
-    ngx_time_t       *tp;
     ngx_quic_qlog_t  *qlog;
     u_char            buf[2048];
 
@@ -153,8 +165,7 @@ ngx_quic_qlog_parameters_set(ngx_connection_t *c, ngx_quic_connection_t *qc,
     p = buf;
     end = buf + sizeof(buf);
 
-    tp = ngx_timeofday();
-    timestamp = (uint64_t) tp->sec * 1000 + tp->msec;
+    timestamp = ngx_quic_qlog_now(qlog);
 
     ngx_qlog_write(p, end,"\x1e{\"time\":%uL,\"name\":"
                    "\"transport:parameters_set\",\"data\":{\"owner\":\"%s\",",
@@ -224,7 +235,6 @@ ngx_quic_qlog_metrics_updated(ngx_connection_t *c, ngx_quic_connection_t *qc)
 {
     u_char           *p, *end;
     uint64_t          timestamp;
-    ngx_time_t       *tp;
     ngx_quic_qlog_t  *qlog;
     u_char            buf[1024];
 
@@ -237,8 +247,7 @@ ngx_quic_qlog_metrics_updated(ngx_connection_t *c, ngx_quic_connection_t *qc)
     p = buf;
     end = buf + sizeof(buf);
 
-    tp = ngx_timeofday();
-    timestamp = (uint64_t) tp->sec * 1000 + tp->msec;
+    timestamp = ngx_quic_qlog_now(qlog);
 
     ngx_qlog_write(p, end, "\x1e{\"time\":%uL,\"name\":"
                    "\"recovery:metrics_updated\",\"data\":{", timestamp);
@@ -410,7 +419,6 @@ ngx_quic_qlog_write_start(ngx_connection_t *c, ngx_quic_connection_t *qc,
     ngx_uint_t sent)
 {
     uint64_t          timestamp;
-    ngx_time_t       *tp;
     ngx_quic_qlog_t  *qlog;
 
     qlog = qc->qlog;
@@ -421,8 +429,7 @@ ngx_quic_qlog_write_start(ngx_connection_t *c, ngx_quic_connection_t *qc,
 
     qlog->last = qlog->buf;
 
-    tp = ngx_timeofday();
-    timestamp = (uint64_t) tp->sec * 1000 + tp->msec;
+    timestamp = ngx_quic_qlog_now(qlog);
 
     ngx_qlog_write(qlog->last, qlog->end,
                    "\x1e{\"time\":%uL,\"name\":\"transport:packet_%s\","
@@ -553,26 +560,24 @@ ngx_quic_qlog_open(ngx_connection_t *c, ngx_quic_connection_t *qc)
 
 
 static ngx_int_t
-ngx_quic_qlog_write_header(ngx_connection_t *c, ngx_quic_connection_t *qc)
+ngx_quic_qlog_write_header(ngx_connection_t *c, ngx_quic_connection_t *qc,
+    uint64_t reference_time_ms)
 {
-    u_char   *p;
+    u_char   *p, *end;
     u_char    buf[2048];
 
     p = buf;
+    end = buf + sizeof(buf);
 
     ngx_qlog_write_literal(p, "\x1e{\"qlog_version\":\"0.3\","
                             "\"qlog_format\":\"JSON-SEQ\","
                             "\"trace\":{\"common_fields\":{");
-
-    ngx_qlog_write_pair_hex(p, p + sizeof(buf), "group_id",
+    ngx_qlog_write_pair_hex(p, end, "group_id",
                             qc->tp.original_dcid.data,
                             qc->tp.original_dcid.len);
-
-
-    ngx_qlog_write_literal(p, ",\"time_format\":\"relative_to_epoch\","
-                            "\"reference_time\":{\"clock_type\":\"system\","
-                            "\"epoch\":\"1970-01-01T00:00:00.000Z\"}},"
-                            "\"vantage_point\":{\"name\":\"nginx\","
+    ngx_qlog_write_literal(p, ",\"time_format\":\"relative\",");
+    ngx_qlog_write_pair_num(p, end, "reference_time", reference_time_ms);
+    ngx_qlog_write_literal(p, "},\"vantage_point\":{\"name\":\"nginx\","
                             "\"type\":\"server\"}}}\n");
 
     return ngx_quic_qlog_write_buf(c, qc->qlog, buf, p - buf);
