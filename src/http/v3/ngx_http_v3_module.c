@@ -302,6 +302,12 @@ ngx_http_v3_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
         conf->quic.qlog_allow = prev->quic.qlog_allow;
     }
 
+    if (conf->quic.qlog_path.len) {
+        if (ngx_conf_full_name(cf->cycle, &conf->quic.qlog_path, 0) != NGX_OK) {
+            return NGX_CONF_ERROR;
+        }
+    }
+
     if (conf->quic.qlog_enabled && conf->quic.qlog_path.len == 0) {
         ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
                            "quic_qlog enabled but quic_qlog_path is not set");

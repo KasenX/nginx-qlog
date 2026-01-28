@@ -631,7 +631,6 @@ ngx_quic_qlog_now(ngx_quic_qlog_t *qlog)
 }
 
 
-/* TODO: handle relative path */
 static ngx_int_t
 ngx_quic_qlog_open(ngx_connection_t *c, ngx_quic_connection_t *qc)
 {
