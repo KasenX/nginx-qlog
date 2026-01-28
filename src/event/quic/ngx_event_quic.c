@@ -348,8 +348,8 @@ ngx_quic_new_connection(ngx_connection_t *c, ngx_quic_conf_t *conf,
     ngx_reusable_connection(c, 1);
 
     if (ngx_quic_qlog_init(c, qc) == NGX_ERROR) {
-        /* TODO: probably don't terminate */
-        return NULL;
+        ngx_log_error(NGX_LOG_WARN, c->log, 0,
+                      "quic qlog init failed, continuing without qlog");
     }
 
     ngx_quic_qlog_parameters_set(c, qc, &qc->tp, NGX_QUIC_QLOG_SIDE_LOCAL);
