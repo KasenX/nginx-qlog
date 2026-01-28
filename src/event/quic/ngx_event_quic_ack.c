@@ -655,6 +655,10 @@ ngx_quic_detect_lost(ngx_connection_t *c, ngx_quic_ack_stat_t *st)
                 nlost++;
             }
 
+            ngx_quic_qlog_pkt_lost(c, qc, ctx, start,
+                                   (ngx_msec_int_t) wait <= 0
+                                   ? NGX_QUIC_QLOG_PKT_LOST_TIME
+                                   : NGX_QUIC_QLOG_PKT_LOST_REORDERING);
             ngx_quic_resend_frames(c, ctx);
         }
     }

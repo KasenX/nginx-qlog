@@ -49,6 +49,7 @@ static ngx_int_t ngx_quic_qlog_write_buf(ngx_connection_t *c,
 static ngx_int_t ngx_quic_qlog_write_header(ngx_connection_t *c,
     ngx_quic_connection_t *qc, uint64_t reference_time_ms);
 static const char *ngx_quic_qlog_packet_name(uint8_t flags);
+static const char *ngx_quic_qlog_packet_name_by_level(ngx_uint_t level);
 static u_char *ngx_quic_qlog_padding_frame(u_char *p, u_char *end,
     ngx_quic_frame_t *f);
 static u_char *ngx_quic_qlog_ping_frame(u_char *p, u_char *end,
@@ -330,6 +331,45 @@ ngx_quic_qlog_metrics_updated(ngx_connection_t *c, ngx_quic_connection_t *qc)
                                 qc->congestion.ssthresh);
     }
 
+    ngx_qlog_write_literal(p, "}}\n");
+
+    ngx_quic_qlog_write_buf(c, qlog, buf, p - buf);
+}
+
+void
+ngx_quic_qlog_pkt_lost(ngx_connection_t *c, ngx_quic_connection_t *qc,
+    ngx_quic_send_ctx_t *ctx, ngx_quic_frame_t *start,
+    ngx_quic_qlog_pkt_lost_e trigger)
+{
+    u_char           *p, *end;
+    uint64_t          timestamp;
+    ngx_quic_qlog_t  *qlog;
+    u_char            buf[512];
+
+    qlog = qc->qlog;
+
+    if (qlog == NULL || qlog->closed) {
+        return;
+    }
+
+    p = buf;
+    end = buf + sizeof(buf);
+
+    timestamp = ngx_quic_qlog_now(qlog);
+
+    ngx_qlog_write(p, end, "\x1e{\"time\":%uL,\"name\":"
+                   "\"recovery:packet_lost\",\"data\":{\"header\":{",
+                   timestamp);
+    ngx_qlog_write_pair_str(p, end, "packet_type",
+                            ngx_quic_qlog_packet_name_by_level(ctx->level));
+    *p++ = ',';
+    ngx_qlog_write_pair_num(p, end, "packet_number", start->pnum);
+    *p++ = '}';
+    *p++ = ',';
+    ngx_qlog_write_pair_str(p, end, "trigger",
+                            trigger == NGX_QUIC_QLOG_PKT_LOST_TIME
+                            ? "time_threshold"
+                            : "reordering_threshold");
     ngx_qlog_write_literal(p, "}}\n");
 
     ngx_quic_qlog_write_buf(c, qlog, buf, p - buf);
@@ -657,6 +697,25 @@ ngx_quic_qlog_packet_name(uint8_t flags)
 
     case NGX_QUIC_PKT_RETRY:
         return "retry";
+
+    default:
+        return "unknown";
+    }
+}
+
+static const char *
+ngx_quic_qlog_packet_name_by_level(ngx_uint_t level)
+{
+    switch (level) {
+
+    case NGX_QUIC_ENCRYPTION_INITIAL:
+        return "initial";
+
+    case NGX_QUIC_ENCRYPTION_HANDSHAKE:
+        return "handshake";
+
+    case NGX_QUIC_ENCRYPTION_APPLICATION:
+        return "1RTT";
 
     default:
         return "unknown";

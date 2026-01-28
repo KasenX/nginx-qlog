@@ -16,6 +16,11 @@ typedef enum {
   NGX_QUIC_QLOG_SIDE_REMOTE,
 } ngx_quic_qlog_side_e;
 
+typedef enum {
+  NGX_QUIC_QLOG_PKT_LOST_TIME,
+  NGX_QUIC_QLOG_PKT_LOST_REORDERING,
+} ngx_quic_qlog_pkt_lost_e;
+
 struct ngx_quic_qlog_s {
     ngx_fd_t   fd;
     ngx_str_t  path;
@@ -46,6 +51,11 @@ ngx_quic_qlog_recovery_parameters_set(ngx_connection_t *c,
 
 void
 ngx_quic_qlog_metrics_updated(ngx_connection_t *c, ngx_quic_connection_t *qc);
+
+void
+ngx_quic_qlog_pkt_lost(ngx_connection_t *c, ngx_quic_connection_t *qc,
+    ngx_quic_send_ctx_t *ctx, ngx_quic_frame_t *start,
+    ngx_quic_qlog_pkt_lost_e trigger);
 
 void
 ngx_quic_qlog_pkt_received_start(ngx_connection_t *c,
