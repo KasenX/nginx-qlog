@@ -617,8 +617,7 @@ ngx_quic_qlog_open(ngx_connection_t *c, ngx_quic_connection_t *qc)
         return NGX_ERROR;
     }
 
-    file.len = dir->len + 1 + qc->tp.original_dcid.len * 2
-               + sizeof(".sqlog") - 1;
+    file.len = dir->len + qc->path->cid->len * 2 + sizeof(".sqlog") - 1;
     file.data = ngx_pnalloc(c->pool, file.len + 1);
     if (file.data == NULL) {
         return NGX_ERROR;
@@ -629,10 +628,11 @@ ngx_quic_qlog_open(ngx_connection_t *c, ngx_quic_connection_t *qc)
     p = ngx_cpymem(p, dir->data, dir->len);
 
     if (!ngx_path_separator(*(p - 1))) {
+        file.len++;
         *p++ = '/';
     }
 
-    p = ngx_hex_dump(p, qc->tp.original_dcid.data, qc->tp.original_dcid.len);
+    p = ngx_hex_dump(p, qc->path->cid->id, qc->path->cid->len);
 
     p = ngx_cpymem(p, ".sqlog", sizeof(".sqlog") - 1);
     *p = '\0';
