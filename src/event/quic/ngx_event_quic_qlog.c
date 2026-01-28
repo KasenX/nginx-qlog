@@ -4,6 +4,9 @@
 #include <ngx_event_quic_qlog.h>
 
 
+#define NGX_QUIC_QLOG_BUF_SIZE  4096
+
+
 #define ngx_qlog_write_literal(p, s)                                         \
     (p = ngx_cpymem(p, s, sizeof(s) - 1))
 
@@ -31,13 +34,25 @@
 #define ngx_qlog_write_pair_duration(p, end, key, val)                       \
     ngx_qlog_write_pair(p, end, key, "%M", val)
 
-static ngx_inline uint64_t
-ngx_quic_qlog_now(ngx_quic_qlog_t *qlog)
-{
-    return (uint64_t) (ngx_current_msec - qlog->start_time);
-}
+
+struct ngx_quic_qlog_s {
+    ngx_fd_t   fd;
+    ngx_str_t  path;
+
+    u_char    *buf;
+    u_char    *last;
+    u_char    *end;
+
+    ngx_msec_t start_time;
+
+    size_t     bytes_written;
+    size_t     max_size;
+
+    unsigned   closed:1;
+};
 
 
+static ngx_inline uint64_t ngx_quic_qlog_now(ngx_quic_qlog_t *qlog);
 static ngx_int_t ngx_quic_qlog_open(ngx_connection_t *c,
     ngx_quic_connection_t *qc);
 static void ngx_quic_qlog_write_start(ngx_connection_t *c,
@@ -600,6 +615,13 @@ ngx_quic_qlog_write_buf(ngx_connection_t *c, ngx_quic_qlog_t *qlog,
     }
 
     return NGX_OK;
+}
+
+
+static ngx_inline uint64_t
+ngx_quic_qlog_now(ngx_quic_qlog_t *qlog)
+{
+    return (uint64_t) (ngx_current_msec - qlog->start_time);
 }
 
 

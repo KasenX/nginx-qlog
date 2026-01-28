@@ -6,36 +6,19 @@
 #include <ngx_event_quic_connection.h>
 
 
-#define NGX_QUIC_QLOG_BUF_SIZE  4096
-
-
 typedef struct ngx_quic_qlog_s  ngx_quic_qlog_t;
 
+
 typedef enum {
-  NGX_QUIC_QLOG_SIDE_LOCAL,
+  NGX_QUIC_QLOG_SIDE_LOCAL = 0,
   NGX_QUIC_QLOG_SIDE_REMOTE,
 } ngx_quic_qlog_side_e;
 
+
 typedef enum {
-  NGX_QUIC_QLOG_PKT_LOST_TIME,
+  NGX_QUIC_QLOG_PKT_LOST_TIME = 0,
   NGX_QUIC_QLOG_PKT_LOST_REORDERING,
 } ngx_quic_qlog_pkt_lost_e;
-
-struct ngx_quic_qlog_s {
-    ngx_fd_t   fd;
-    ngx_str_t  path;
-
-    u_char    *buf;
-    u_char    *last;
-    u_char    *end;
-
-    ngx_msec_t start_time;
-
-    size_t     bytes_written;
-    size_t     max_size;
-
-    unsigned   closed:1;
-};
 
 
 ngx_int_t
