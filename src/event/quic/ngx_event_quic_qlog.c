@@ -210,33 +210,34 @@ ngx_quic_qlog_parameters_set(ngx_connection_t *c, ngx_quic_connection_t *qc,
 
     timestamp = ngx_quic_qlog_now(qlog);
 
-    ngx_qlog_write(p, end,"\x1e{\"time\":%uL,\"name\":"
+    ngx_qlog_write(p, end, "\x1e{\"time\":%uL,\"name\":"
                    "\"transport:parameters_set\",\"data\":{\"owner\":\"%s\",",
                    timestamp,
                    side == NGX_QUIC_QLOG_SIDE_LOCAL ? "local" : "remote");
     ngx_qlog_write_pair_hex(p, end, "initial_source_connection_id",
-                           params->initial_scid.data, params->initial_scid.len);
+                            params->initial_scid.data,
+                            params->initial_scid.len);
     ngx_qlog_write_char(p, end, ',');
     if (side == NGX_QUIC_QLOG_SIDE_LOCAL) {
         ngx_qlog_write_pair_hex(p, end, "original_destination_connection_id",
-                               params->original_dcid.data,
-                               params->original_dcid.len);
+                                params->original_dcid.data,
+                                params->original_dcid.len);
         ngx_qlog_write_char(p, end, ',');
     }
     if (params->retry_scid.len) {
         ngx_qlog_write_pair_hex(p, end, "retry_source_connection_id",
-                               params->retry_scid.data,
-                               params->retry_scid.len);
+                                params->retry_scid.data,
+                                params->retry_scid.len);
         ngx_qlog_write_char(p, end, ',');
     }
     ngx_qlog_write_pair_hex(p, end, "stateless_reset_token",
-                           params->sr_token, NGX_QUIC_SR_TOKEN_LEN);
+                            params->sr_token, NGX_QUIC_SR_TOKEN_LEN);
     ngx_qlog_write_char(p, end, ',');
     ngx_qlog_write_pair_bool(p, end, "disable_active_migration",
-                            params->disable_active_migration);
+                             params->disable_active_migration);
     ngx_qlog_write_char(p, end, ',');
     ngx_qlog_write_pair_duration(p, end, "max_idle_timeout",
-                                params->max_idle_timeout);
+                                 params->max_idle_timeout);
     ngx_qlog_write_char(p, end, ',');
     ngx_qlog_write_pair_num(p, end, "max_udp_payload_size",
                             params->max_udp_payload_size);
@@ -281,7 +282,7 @@ ngx_quic_qlog_recovery_parameters_set(ngx_connection_t *c,
     ngx_quic_qlog_t  *qlog;
     size_t            max_datagram_size;
     uint64_t          min_cwnd;
-    u_char            buf[1024];
+    u_char            buf[512];
 
     qlog = qc->qlog;
 
@@ -332,7 +333,7 @@ ngx_quic_qlog_metrics_updated(ngx_connection_t *c, ngx_quic_connection_t *qc)
     u_char           *p, *end;
     uint64_t          timestamp;
     ngx_quic_qlog_t  *qlog;
-    u_char            buf[1024];
+    u_char            buf[512];
 
     qlog = qc->qlog;
 
@@ -386,7 +387,7 @@ ngx_quic_qlog_pkt_lost(ngx_connection_t *c, ngx_quic_connection_t *qc,
     u_char           *p, *end;
     uint64_t          timestamp;
     ngx_quic_qlog_t  *qlog;
-    u_char            buf[512];
+    u_char            buf[256];
 
     qlog = qc->qlog;
 
@@ -614,6 +615,7 @@ ngx_quic_qlog_write_buf(ngx_connection_t *c, ngx_quic_qlog_t *qlog,
     if (n == -1) {
         ngx_log_error(NGX_LOG_WARN, c->log, ngx_errno,
                       ngx_write_fd_n " to \"%V\" failed", &qlog->path);
+        ngx_close_file(qlog->fd);
         qlog->fd = NGX_INVALID_FILE;
         qlog->closed = 1;
         return NGX_ERROR;
@@ -703,7 +705,7 @@ ngx_quic_qlog_write_header(ngx_connection_t *c, ngx_quic_connection_t *qc,
     uint64_t reference_time_ms)
 {
     u_char   *p, *end;
-    u_char    buf[2048];
+    u_char    buf[256];
 
     p = buf;
     end = buf + sizeof(buf);
@@ -731,38 +733,30 @@ ngx_quic_qlog_packet_name(uint8_t flags)
     }
 
     switch (flags & NGX_QUIC_PKT_TYPE) {
-
     case NGX_QUIC_PKT_INITIAL:
         return "initial";
-
     case NGX_QUIC_PKT_ZRTT:
         return "0RTT";
-
     case NGX_QUIC_PKT_HANDSHAKE:
         return "handshake";
-
     case NGX_QUIC_PKT_RETRY:
         return "retry";
-
     default:
         return "unknown";
     }
 }
 
+
 static const char *
 ngx_quic_qlog_packet_name_by_level(ngx_uint_t level)
 {
     switch (level) {
-
     case NGX_QUIC_ENCRYPTION_INITIAL:
         return "initial";
-
     case NGX_QUIC_ENCRYPTION_HANDSHAKE:
         return "handshake";
-
     case NGX_QUIC_ENCRYPTION_APPLICATION:
         return "1RTT";
-
     default:
         return "unknown";
     }

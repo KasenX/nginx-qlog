@@ -11,23 +11,21 @@ typedef struct ngx_quic_qlog_s  ngx_quic_qlog_t;
 
 typedef enum {
   NGX_QUIC_QLOG_SIDE_LOCAL = 0,
-  NGX_QUIC_QLOG_SIDE_REMOTE,
+  NGX_QUIC_QLOG_SIDE_REMOTE
 } ngx_quic_qlog_side_e;
 
 
 typedef enum {
   NGX_QUIC_QLOG_PKT_LOST_TIME = 0,
-  NGX_QUIC_QLOG_PKT_LOST_REORDERING,
+  NGX_QUIC_QLOG_PKT_LOST_REORDERING
 } ngx_quic_qlog_pkt_lost_e;
 
 
 ngx_int_t
 ngx_quic_qlog_init(ngx_connection_t *c, ngx_quic_connection_t *qc);
 
-
 void
 ngx_quic_qlog_close(ngx_quic_connection_t *qc);
-
 
 void
 ngx_quic_qlog_parameters_set(ngx_connection_t *c, ngx_quic_connection_t *qc,
