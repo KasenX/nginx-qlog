@@ -98,6 +98,7 @@ typedef struct {
     ngx_str_t                      qlog_path;
     ngx_uint_t                     qlog_sample_n;
     size_t                         qlog_max_size;
+    ngx_array_t                   *qlog_allow; /* array of ngx_cidr_t */
 
     ngx_quic_init_pt               init;
     ngx_quic_shutdown_pt           shutdown;

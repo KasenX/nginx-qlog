@@ -117,6 +117,12 @@ ngx_quic_qlog_init(ngx_connection_t *c, ngx_quic_connection_t *qc)
         return NGX_DECLINED;
     }
 
+    if (qc->conf->qlog_allow) {
+        if (ngx_cidr_match(c->sockaddr, qc->conf->qlog_allow) != NGX_OK) {
+            return NGX_DECLINED;
+        }
+    }
+
     if (qc->conf->qlog_sample_n > 1) {
         if ((ngx_uint_t) ngx_random() % qc->conf->qlog_sample_n != 0) {
             return NGX_DECLINED;

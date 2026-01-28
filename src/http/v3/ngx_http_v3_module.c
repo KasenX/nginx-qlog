@@ -18,6 +18,8 @@ static char *ngx_http_v3_merge_srv_conf(ngx_conf_t *cf, void *parent,
     void *child);
 static char *ngx_http_quic_host_key(ngx_conf_t *cf, ngx_command_t *cmd,
     void *conf);
+static char *ngx_http_quic_qlog_allow(ngx_conf_t *cf, ngx_command_t *cmd,
+    void *conf);
 
 
 static ngx_command_t  ngx_http_v3_commands[] = {
@@ -104,6 +106,13 @@ static ngx_command_t  ngx_http_v3_commands[] = {
     ngx_conf_set_size_slot,
     NGX_HTTP_SRV_CONF_OFFSET,
     offsetof(ngx_http_v3_srv_conf_t, quic.qlog_max_size),
+    NULL },
+
+    { ngx_string("quic_qlog_allow"),
+    NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_CONF_TAKE1,
+    ngx_http_quic_qlog_allow,
+    NGX_HTTP_SRV_CONF_OFFSET,
+    0,
     NULL },
 
       ngx_null_command
@@ -223,6 +232,7 @@ ngx_http_v3_create_srv_conf(ngx_conf_t *cf)
      *     h3scf->quic.idle_timeout = 0;
      *     h3scf->max_blocked_streams = 0;
      *     h3scf->quic.qlog_path = { 0, NULL }
+     *     h3scf->quic.qlog_allow = NULL;
      */
 
     h3scf->enable = NGX_CONF_UNSET;
@@ -287,6 +297,10 @@ ngx_http_v3_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child)
     ngx_conf_merge_str_value(conf->quic.qlog_path, prev->quic.qlog_path, "");
     ngx_conf_merge_uint_value(conf->quic.qlog_sample_n, prev->quic.qlog_sample_n, 1);
     ngx_conf_merge_size_value(conf->quic.qlog_max_size, prev->quic.qlog_max_size, 0);
+
+    if (conf->quic.qlog_allow == NULL) {
+        conf->quic.qlog_allow = prev->quic.qlog_allow;
+    }
 
     if (conf->quic.qlog_enabled && conf->quic.qlog_path.len == 0) {
         ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
@@ -434,4 +448,47 @@ failed:
     }
 
     return NGX_CONF_ERROR;
+}
+
+
+static char *
+ngx_http_quic_qlog_allow(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
+{
+    ngx_http_v3_srv_conf_t *h3scf = conf;
+
+    ngx_int_t    rc;
+    ngx_str_t   *value;
+    ngx_cidr_t   cidr, *pcidr;
+
+    if (h3scf->quic.qlog_allow == NULL) {
+        h3scf->quic.qlog_allow = ngx_array_create(cf->pool, 2,
+                                                  sizeof(ngx_cidr_t));
+        if (h3scf->quic.qlog_allow == NULL) {
+            return NGX_CONF_ERROR;
+        }
+    }
+
+    value = cf->args->elts;
+
+    rc = ngx_ptocidr(&value[1], &cidr);
+    if (rc == NGX_ERROR) {
+        ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+                           "invalid parameter \"%V\"", &value[1]);
+        return NGX_CONF_ERROR;
+    }
+
+    if (rc == NGX_DONE) {
+        ngx_conf_log_error(NGX_LOG_WARN, cf, 0,
+                           "low address bits of %V are meaningless",
+                           &value[1]);
+    }
+
+    pcidr = ngx_array_push(h3scf->quic.qlog_allow);
+    if (pcidr == NULL) {
+        return NGX_CONF_ERROR;
+    }
+
+    *pcidr = cidr;
+
+    return NGX_CONF_OK;
 }
