@@ -597,6 +597,8 @@ ngx_quic_close_connection(ngx_connection_t *c, ngx_int_t rc)
         ngx_delete_posted_event(&qc->close);
     }
 
+    ngx_quic_qlog_close(qc);
+
     ngx_quic_close_sockets(c);
 
     ngx_quic_keys_cleanup(qc->keys);

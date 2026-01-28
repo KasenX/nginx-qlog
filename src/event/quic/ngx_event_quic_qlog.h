@@ -24,6 +24,11 @@ typedef enum {
 ngx_int_t
 ngx_quic_qlog_init(ngx_connection_t *c, ngx_quic_connection_t *qc);
 
+
+void
+ngx_quic_qlog_close(ngx_quic_connection_t *qc);
+
+
 void
 ngx_quic_qlog_parameters_set(ngx_connection_t *c, ngx_quic_connection_t *qc,
     ngx_quic_tp_t *params, ngx_quic_qlog_side_e side);
