@@ -191,8 +191,8 @@ ngx_quic_qlog_close(ngx_quic_connection_t *qc)
 
 
 void
-ngx_quic_qlog_parameters_set(ngx_connection_t *c, ngx_quic_connection_t *qc,
-    ngx_quic_tp_t *params, ngx_quic_qlog_side_e side)
+ngx_quic_qlog_transport_parameters_set(ngx_connection_t *c,
+    ngx_quic_connection_t *qc, ngx_quic_tp_t *params, ngx_quic_qlog_side_e side)
 {
     u_char           *p, *end;
     uint64_t          timestamp;
@@ -272,6 +272,7 @@ ngx_quic_qlog_parameters_set(ngx_connection_t *c, ngx_quic_connection_t *qc,
 
     ngx_quic_qlog_write_buf(c, qlog, buf, p - buf);
 }
+
 
 void
 ngx_quic_qlog_recovery_parameters_set(ngx_connection_t *c,
@@ -378,6 +379,7 @@ ngx_quic_qlog_metrics_updated(ngx_connection_t *c, ngx_quic_connection_t *qc)
 
     ngx_quic_qlog_write_buf(c, qlog, buf, p - buf);
 }
+
 
 void
 ngx_quic_qlog_pkt_lost(ngx_connection_t *c, ngx_quic_connection_t *qc,
