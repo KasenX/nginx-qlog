@@ -795,11 +795,16 @@ ngx_quic_handle_packet(ngx_connection_t *c, ngx_quic_conf_t *conf,
     ngx_quic_socket_t      *qsock;
     ngx_quic_connection_t  *qc;
 
+    qc = ngx_quic_get_connection(c);
+
     c->log->action = "parsing quic packet";
 
     rc = ngx_quic_parse_packet(pkt);
 
     if (rc == NGX_ERROR) {
+        if (qc) {
+            ngx_quic_qlog_pkt_dropped(c, qc, pkt, "header_parse_error");
+        }
         return NGX_DECLINED;
     }
 
@@ -825,13 +830,12 @@ ngx_quic_handle_packet(ngx_connection_t *c, ngx_quic_conf_t *conf,
     }
 #endif
 
-    qc = ngx_quic_get_connection(c);
-
     if (qc) {
 
         if (rc == NGX_ABORT) {
             ngx_log_error(NGX_LOG_INFO, c->log, 0,
                           "quic unsupported version: 0x%xD", pkt->version);
+            ngx_quic_qlog_pkt_dropped(c, qc, pkt, "unsupported_version");
             return NGX_DECLINED;
         }
 
@@ -840,6 +844,7 @@ ngx_quic_handle_packet(ngx_connection_t *c, ngx_quic_conf_t *conf,
             if (pkt->version != qc->version) {
                 ngx_log_error(NGX_LOG_INFO, c->log, 0,
                               "quic version mismatch: 0x%xD", pkt->version);
+                ngx_quic_qlog_pkt_dropped(c, qc, pkt, "unexpected_version");
                 return NGX_DECLINED;
             }
 
@@ -858,6 +863,8 @@ ngx_quic_handle_packet(ngx_connection_t *c, ngx_quic_conf_t *conf,
             }
 
             if (ngx_quic_check_csid(qc, pkt) != NGX_OK) {
+                ngx_quic_qlog_pkt_dropped(c, qc, pkt,
+                                          "unexpected_source_connection_id");
                 return NGX_DECLINED;
             }
 
@@ -984,6 +991,7 @@ ngx_quic_handle_payload(ngx_connection_t *c, ngx_quic_header_t *pkt)
         ngx_log_error(NGX_LOG_INFO, c->log, 0,
                       "quic no %s keys, ignoring packet",
                       ngx_quic_level_name(pkt->level));
+        ngx_quic_qlog_pkt_dropped(c, qc, pkt, "key_unavailable");
         return NGX_DECLINED;
     }
 
@@ -994,6 +1002,7 @@ ngx_quic_handle_payload(ngx_connection_t *c, ngx_quic_header_t *pkt)
         ngx_log_error(NGX_LOG_INFO, c->log, 0,
                       "quic no %s keys ready, ignoring packet",
                       ngx_quic_level_name(pkt->level));
+        ngx_quic_qlog_pkt_dropped(c, qc, pkt, "key_unavailable");
         return NGX_DECLINED;
     }
 #endif
@@ -1008,6 +1017,11 @@ ngx_quic_handle_payload(ngx_connection_t *c, ngx_quic_header_t *pkt)
     if (rc != NGX_OK) {
         qc->error = pkt->error;
         qc->error_reason = "failed to decrypt packet";
+        if (rc == NGX_DECLINED) {
+            ngx_quic_qlog_pkt_dropped(c, qc, pkt, "payload_decrypt_error");
+        } else if (pkt->error == NGX_QUIC_ERR_PROTOCOL_VIOLATION) {
+            ngx_quic_qlog_pkt_dropped(c, qc, pkt, "protocol_violation");
+        }
         return rc;
     }
 

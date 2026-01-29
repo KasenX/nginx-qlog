@@ -422,6 +422,55 @@ ngx_quic_qlog_pkt_lost(ngx_connection_t *c, ngx_quic_connection_t *qc,
 
 
 void
+ngx_quic_qlog_pkt_dropped(ngx_connection_t *c, ngx_quic_connection_t *qc,
+    ngx_quic_header_t *pkt, const char *trigger)
+{
+    u_char           *p, *end;
+    uint64_t          timestamp;
+    ngx_quic_qlog_t  *qlog;
+    u_char            buf[256];
+
+    qlog = qc->qlog;
+
+    if (qlog == NULL || qlog->closed) {
+        return;
+    }
+
+    p = buf;
+    end = buf + sizeof(buf);
+
+    timestamp = ngx_quic_qlog_now(qlog);
+
+    ngx_qlog_write(p, end, "\x1e{\"time\":%uL,\"name\":"
+                   "\"transport:packet_dropped\",\"data\":{",
+                   timestamp);
+
+    ngx_qlog_write_literal(p, end, "\"header\":{");
+    ngx_qlog_write_pair_str(p, end, "packet_type",
+                            ngx_quic_qlog_packet_name(pkt->flags));
+
+    if (pkt->decrypted) {
+        ngx_qlog_write_char(p, end, ',');
+        ngx_qlog_write_pair_num(p, end, "packet_number", pkt->pn);
+    }
+
+    ngx_qlog_write_char(p, end, '}');
+    ngx_qlog_write_char(p, end, ',');
+
+    ngx_qlog_write(p, end, "\"raw\":{\"length\":%uz}", pkt->len);
+
+    if (trigger) {
+        ngx_qlog_write_char(p, end, ',');
+        ngx_qlog_write_pair_str(p, end, "trigger", trigger);
+    }
+
+    ngx_qlog_write_literal(p, end, "}}\n");
+
+    ngx_quic_qlog_write_buf(c, qlog, buf, p - buf);
+}
+
+
+void
 ngx_quic_qlog_pkt_received_start(ngx_connection_t *c,
     ngx_quic_connection_t *qc)
 {
