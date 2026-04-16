@@ -57,34 +57,36 @@
 
 
 struct ngx_quic_qlog_s {
-    ngx_fd_t    fd;
-    ngx_str_t   path;
+    ngx_fd_t                  fd;
+    ngx_str_t                 path;
 
-    u_char     *buf;
-    u_char     *last;
-    u_char     *end;
+    u_char                   *buf;
+    u_char                   *last;
+    u_char                   *end;
 
-    ngx_log_t  *log;
+    ngx_log_t                *log;
 
-    ngx_msec_t  start_time;
+    ngx_msec_t                start_time;
 
-    ngx_uint_t  importance;
+    ngx_uint_t                importance;
 
-    size_t      bytes_written;
-    size_t      max_size;
+    size_t                    bytes_written;
+    size_t                    max_size;
 
-    unsigned    sent:1;
-    unsigned    closed:1;
+    unsigned                  sent:1;
+    unsigned                  closed:1;
 
     /* previous metrics for dedup */
-    ngx_msec_t  prev_min_rtt;
-    ngx_msec_t  prev_avg_rtt;
-    ngx_msec_t  prev_latest_rtt;
-    ngx_msec_t  prev_rttvar;
-    ngx_uint_t  prev_pto_count;
-    size_t      prev_cwnd;
-    size_t      prev_in_flight;
-    size_t      prev_ssthresh;
+    ngx_msec_t                prev_min_rtt;
+    ngx_msec_t                prev_avg_rtt;
+    ngx_msec_t                prev_latest_rtt;
+    ngx_msec_t                prev_rttvar;
+    ngx_uint_t                prev_pto_count;
+    size_t                    prev_cwnd;
+    size_t                    prev_in_flight;
+    size_t                    prev_ssthresh;
+
+    ngx_quic_qlog_cc_state_e  prev_cc_state;
 };
 
 
@@ -167,6 +169,32 @@ static u_char *ngx_quic_qlog_connection_close_frame(u_char *p, u_char *end,
     ngx_quic_frame_t *f);
 static u_char *ngx_quic_qlog_handshake_done_frame(u_char *p, u_char *end,
     ngx_quic_frame_t *f);
+
+
+static const char  *ngx_quic_qlog_key_types[4][2] = {
+    { "client_initial_secret",   "server_initial_secret" },
+    { "client_0rtt_secret",      "server_0rtt_secret" },
+    { "client_handshake_secret", "server_handshake_secret" },
+    { "client_1rtt_secret",      "server_1rtt_secret" }
+};
+
+static const char  *ngx_quic_qlog_send_state_str[] = {
+    "ready",        /* NGX_QUIC_STREAM_SEND_READY */
+    "send",         /* NGX_QUIC_STREAM_SEND_SEND */
+    "data_sent",    /* NGX_QUIC_STREAM_SEND_DATA_SENT */
+    "data_recvd",   /* NGX_QUIC_STREAM_SEND_DATA_RECVD */
+    "reset_sent",   /* NGX_QUIC_STREAM_SEND_RESET_SENT */
+    "reset_recvd"   /* NGX_QUIC_STREAM_SEND_RESET_RECVD */
+};
+
+static const char  *ngx_quic_qlog_recv_state_str[] = {
+    "recv",         /* NGX_QUIC_STREAM_RECV_RECV */
+    "size_known",   /* NGX_QUIC_STREAM_RECV_SIZE_KNOWN */
+    "data_recvd",   /* NGX_QUIC_STREAM_RECV_DATA_RECVD */
+    "data_read",    /* NGX_QUIC_STREAM_RECV_DATA_READ */
+    "reset_recvd",  /* NGX_QUIC_STREAM_RECV_RESET_RECVD */
+    "reset_read"    /* NGX_QUIC_STREAM_RECV_RESET_READ */
+};
 
 
 ngx_int_t
@@ -334,6 +362,103 @@ ngx_quic_qlog_connection_closed(ngx_connection_t *c,
 
 
 void
+ngx_quic_qlog_cid_updated(ngx_connection_t *c,
+    ngx_quic_connection_t *qc, ngx_quic_client_id_t *old_cid,
+    ngx_quic_client_id_t *new_cid)
+{
+    u_char           *p, *end;
+    ngx_quic_qlog_t  *qlog;
+
+    qlog = ngx_quic_qlog_start_event(qc->qlog, &p, &end,
+                                     NGX_QUIC_QLOG_LEVEL_BASE,
+                                     "connectivity:connection_id_updated");
+    if (qlog == NULL) {
+        return;
+    }
+
+    ngx_qlog_write_pair_str(p, end, "owner", "remote");
+    ngx_qlog_write_char(p, end, ',');
+    ngx_qlog_write_pair_hex(p, end, "old", old_cid->id, old_cid->len);
+    ngx_qlog_write_char(p, end, ',');
+    ngx_qlog_write_pair_hex(p, end, "new", new_cid->id, new_cid->len);
+    ngx_qlog_write_literal(p, end, "}}\n");
+
+    ngx_quic_qlog_write(qlog, qlog->last, p - qlog->last);
+}
+
+
+void
+ngx_quic_qlog_mtu_updated(ngx_connection_t *c,
+    ngx_quic_connection_t *qc, ngx_quic_path_t *path, size_t old_mtu)
+{
+    u_char           *p, *end;
+    ngx_quic_qlog_t  *qlog;
+
+    qlog = ngx_quic_qlog_start_event(qc->qlog, &p, &end,
+                                     NGX_QUIC_QLOG_LEVEL_EXTRA,
+                                     "connectivity:mtu_updated");
+    if (qlog == NULL) {
+        return;
+    }
+
+    ngx_qlog_write_pair_num(p, end, "old", (uint64_t) old_mtu);
+    ngx_qlog_write_char(p, end, ',');
+    ngx_qlog_write_pair_num(p, end, "new", (uint64_t) path->mtu);
+    ngx_qlog_write_literal(p, end, "}}\n");
+
+    ngx_quic_qlog_write(qlog, qlog->last, p - qlog->last);
+}
+
+
+void
+ngx_quic_qlog_version_information(ngx_connection_t *c,
+    ngx_quic_connection_t *qc)
+{
+    u_char           *p, *end;
+    ngx_quic_qlog_t  *qlog;
+
+    qlog = ngx_quic_qlog_start_event(qc->qlog, &p, &end,
+                                     NGX_QUIC_QLOG_LEVEL_CORE,
+                                     "transport:version_information");
+    if (qlog == NULL) {
+        return;
+    }
+
+    ngx_qlog_write(p, end,
+                   "\"server_versions\":[\"%08xD\"],"
+                   "\"client_versions\":[\"%08xD\"],"
+                   "\"chosen_version\":\"%08xD\"",
+                   (uint32_t) 0x00000001,
+                   qc->version, qc->version);
+    ngx_qlog_write_literal(p, end, "}}\n");
+
+    ngx_quic_qlog_write(qlog, qlog->last, p - qlog->last);
+}
+
+
+void
+ngx_quic_qlog_alpn_information(ngx_connection_t *c,
+    ngx_quic_connection_t *qc, u_char *alpn, unsigned int alpn_len)
+{
+    u_char           *p, *end;
+    ngx_quic_qlog_t  *qlog;
+
+    qlog = ngx_quic_qlog_start_event(qc->qlog, &p, &end,
+                                     NGX_QUIC_QLOG_LEVEL_CORE,
+                                     "transport:alpn_information");
+    if (qlog == NULL) {
+        return;
+    }
+
+    ngx_qlog_write(p, end, "\"chosen_alpn\":\"%*s\"",
+                   (size_t) alpn_len, alpn);
+    ngx_qlog_write_literal(p, end, "}}\n");
+
+    ngx_quic_qlog_write(qlog, qlog->last, p - qlog->last);
+}
+
+
+void
 ngx_quic_qlog_transport_parameters_set(ngx_connection_t *c,
     ngx_quic_connection_t *qc, ngx_quic_tp_t *params, ngx_quic_qlog_side_e side)
 {
@@ -405,6 +530,197 @@ ngx_quic_qlog_transport_parameters_set(ngx_connection_t *c,
     ngx_qlog_write_char(p, end, ',');
     ngx_qlog_write_pair_num(p, end, "initial_max_streams_uni",
                             params->initial_max_streams_uni);
+    ngx_qlog_write_literal(p, end, "}}\n");
+
+    ngx_quic_qlog_write(qlog, qlog->last, p - qlog->last);
+}
+
+
+void
+ngx_quic_qlog_pkt_dropped(ngx_connection_t *c, ngx_quic_connection_t *qc,
+    ngx_quic_header_t *pkt, const char *trigger)
+{
+    u_char           *p, *end;
+    ngx_quic_qlog_t  *qlog;
+
+    qlog = ngx_quic_qlog_start_event(qc->qlog, &p, &end,
+                                     NGX_QUIC_QLOG_LEVEL_BASE,
+                                     "transport:packet_dropped");
+    if (qlog == NULL) {
+        return;
+    }
+
+    ngx_qlog_write_literal(p, end, "\"header\":{");
+    ngx_qlog_write_pair_str(p, end, "packet_type",
+                            ngx_quic_qlog_packet_name(pkt->flags));
+
+    if (pkt->decrypted) {
+        ngx_qlog_write_char(p, end, ',');
+        ngx_qlog_write_pair_num(p, end, "packet_number", pkt->pn);
+    }
+
+    ngx_qlog_write_char(p, end, '}');
+    ngx_qlog_write_char(p, end, ',');
+
+    ngx_qlog_write(p, end, "\"raw\":{\"length\":%uz}", pkt->len);
+
+    if (trigger) {
+        ngx_qlog_write_char(p, end, ',');
+        ngx_qlog_write_pair_str(p, end, "trigger", trigger);
+    }
+
+    ngx_qlog_write_literal(p, end, "}}\n");
+
+    ngx_quic_qlog_write(qlog, qlog->last, p - qlog->last);
+}
+
+
+void
+ngx_quic_qlog_stream_state_updated(ngx_connection_t *c,
+    ngx_quic_stream_t *qs, ngx_uint_t is_send,
+    ngx_uint_t old_state, ngx_uint_t new_state)
+{
+    u_char                  *p, *end;
+    const char              *old_str, *new_str, *stream_side;
+    ngx_quic_qlog_t         *qlog;
+    ngx_quic_connection_t   *qc;
+
+    qc = ngx_quic_get_connection(c);
+
+    qlog = ngx_quic_qlog_start_event(qc->qlog, &p, &end,
+                                     NGX_QUIC_QLOG_LEVEL_BASE,
+                                     "transport:stream_state_updated");
+    if (qlog == NULL) {
+        return;
+    }
+
+    if (is_send) {
+        old_str = ngx_quic_qlog_send_state_str[old_state];
+        new_str = ngx_quic_qlog_send_state_str[new_state];
+        stream_side = "sending";
+    } else {
+        old_str = ngx_quic_qlog_recv_state_str[old_state];
+        new_str = ngx_quic_qlog_recv_state_str[new_state];
+        stream_side = "receiving";
+    }
+
+    ngx_qlog_write_pair_num(p, end, "stream_id", qs->id);
+    ngx_qlog_write_char(p, end, ',');
+    ngx_qlog_write_pair_str(p, end, "stream_type",
+                            (qs->id & NGX_QUIC_STREAM_UNIDIRECTIONAL)
+                            ? "unidirectional" : "bidirectional");
+    ngx_qlog_write_char(p, end, ',');
+    ngx_qlog_write_pair_str(p, end, "stream_side", stream_side);
+    ngx_qlog_write_char(p, end, ',');
+    ngx_qlog_write_pair_str(p, end, "old", old_str);
+    ngx_qlog_write_char(p, end, ',');
+    ngx_qlog_write_pair_str(p, end, "new", new_str);
+    ngx_qlog_write_literal(p, end, "}}\n");
+
+    ngx_quic_qlog_write(qlog, qlog->last, p - qlog->last);
+}
+
+
+void
+ngx_quic_qlog_key_updated(ngx_connection_t *c, ngx_quic_connection_t *qc,
+    ngx_uint_t level, ngx_uint_t is_write)
+{
+    u_char           *p, *end;
+    ngx_quic_qlog_t  *qlog;
+
+    if (level > 3)
+    {
+        return;
+    }
+
+    qlog = ngx_quic_qlog_start_event(qc->qlog, &p, &end,
+                                     NGX_QUIC_QLOG_LEVEL_BASE,
+                                     "security:key_updated");
+    if (qlog == NULL) {
+        return;
+    }
+
+    ngx_qlog_write_pair_str(p, end, "key_type",
+                            ngx_quic_qlog_key_types[level][is_write ? 1 : 0]);
+    ngx_qlog_write_char(p, end, ',');
+    ngx_qlog_write_pair_str(p, end, "trigger", "tls");
+    ngx_qlog_write_literal(p, end, "}}\n");
+
+    ngx_quic_qlog_write(qlog, qlog->last, p - qlog->last);
+}
+
+
+void
+ngx_quic_qlog_key_discarded(ngx_connection_t *c, ngx_quic_connection_t *qc,
+    ngx_uint_t level)
+{
+    u_char           *p, *end;
+    ngx_uint_t        i;
+    ngx_quic_qlog_t  *qlog;
+
+    if (level > 3) {
+        return;
+    }
+
+    for (i = 0; i < 2; i++) {
+        qlog = ngx_quic_qlog_start_event(qc->qlog, &p, &end,
+                                         NGX_QUIC_QLOG_LEVEL_BASE,
+                                         "security:key_discarded");
+        if (qlog == NULL) {
+            return;
+        }
+
+        ngx_qlog_write_pair_str(p, end, "key_type",
+                                ngx_quic_qlog_key_types[level][i]);
+        ngx_qlog_write_char(p, end, ',');
+        ngx_qlog_write_pair_str(p, end, "trigger", "tls");
+        ngx_qlog_write_literal(p, end, "}}\n");
+
+        ngx_quic_qlog_write(qlog, qlog->last, p - qlog->last);
+    }
+}
+
+
+void
+ngx_quic_qlog_recovery_parameters_set(ngx_connection_t *c,
+    ngx_quic_connection_t *qc)
+{
+    u_char           *p, *end;
+    size_t            max_datagram_size;
+    uint64_t          min_cwnd;
+    ngx_quic_qlog_t  *qlog;
+
+    qlog = ngx_quic_qlog_start_event(qc->qlog, &p, &end,
+                                     NGX_QUIC_QLOG_LEVEL_BASE,
+                                     "recovery:parameters_set");
+    if (qlog == NULL) {
+        return;
+    }
+
+    max_datagram_size = qc->path ? qc->path->mtu : qc->congestion.mtu;
+    min_cwnd = 2 * (uint64_t) max_datagram_size;
+
+    ngx_qlog_write_pair_num(p, end, "reordering_threshold", NGX_QUIC_PKT_THR);
+    ngx_qlog_write_char(p, end, ',');
+    ngx_qlog_write_pair(p, end, "time_threshold", "%.3f", 1.125);
+    ngx_qlog_write_char(p, end, ',');
+    ngx_qlog_write_pair_num(p, end, "timer_granularity",
+                            NGX_QUIC_TIME_GRANULARITY);
+    ngx_qlog_write_char(p, end, ',');
+    ngx_qlog_write_pair_num(p, end, "initial_rtt", NGX_QUIC_INITIAL_RTT);
+    ngx_qlog_write_char(p, end, ',');
+    ngx_qlog_write_pair_num(p, end, "max_datagram_size", max_datagram_size);
+    ngx_qlog_write_char(p, end, ',');
+    ngx_qlog_write_pair_num(p, end, "initial_congestion_window",
+                            qc->congestion.window);
+    ngx_qlog_write_char(p, end, ',');
+    ngx_qlog_write_pair_num(p, end, "minimum_congestion_window", min_cwnd);
+    ngx_qlog_write_char(p, end, ',');
+    ngx_qlog_write_pair(p, end, "loss_reduction_factor", "%.3f",
+                        (double) NGX_QUIC_CUBIC_BETA / 10.0);
+    ngx_qlog_write_char(p, end, ',');
+    ngx_qlog_write_pair_num(p, end, "persistent_congestion_threshold",
+                            NGX_QUIC_PERSISTENT_CONGESTION_THR);
     ngx_qlog_write_literal(p, end, "}}\n");
 
     ngx_quic_qlog_write(qlog, qlog->last, p - qlog->last);
@@ -511,6 +827,79 @@ ngx_quic_qlog_metrics_updated(ngx_connection_t *c, ngx_quic_connection_t *qc)
     qlog->prev_cwnd = qc->congestion.window;
     qlog->prev_in_flight = qc->congestion.in_flight;
     qlog->prev_ssthresh = qc->congestion.ssthresh;
+
+    ngx_qlog_write_literal(p, end, "}}\n");
+
+    ngx_quic_qlog_write(qlog, qlog->last, p - qlog->last);
+}
+
+
+void
+ngx_quic_qlog_congestion_state_updated(ngx_connection_t *c,
+    ngx_quic_connection_t *qc, ngx_quic_qlog_cc_state_e state)
+{
+    u_char                   *p, *end;
+    ngx_quic_qlog_t          *qlog;
+    ngx_quic_qlog_cc_state_e  old_state;
+
+    static const char *cc_state_names[] = {
+        "",                      /* UNKNOWN — never logged */
+        "slow_start",
+        "congestion_avoidance",
+        "recovery"
+    };
+
+    qlog = ngx_quic_qlog_start_event(qc->qlog, &p, &end,
+                                     NGX_QUIC_QLOG_LEVEL_BASE,
+                                     "recovery:congestion_state_updated");
+    if (qlog == NULL) {
+        return;
+    }
+
+    if (state == qlog->prev_cc_state) {
+        return;
+    }
+
+    old_state = qlog->prev_cc_state;
+    qlog->prev_cc_state = state;
+
+    if (old_state != NGX_QUIC_QLOG_CC_UNKNOWN) {
+        ngx_qlog_write_pair_str(p, end, "old", cc_state_names[old_state]);
+        ngx_qlog_write_char(p, end, ',');
+    }
+    ngx_qlog_write_pair_str(p, end, "new", cc_state_names[state]);
+    ngx_qlog_write_literal(p, end, "}}\n");
+
+    ngx_quic_qlog_write(qlog, qlog->last, p - qlog->last);
+}
+
+
+void
+ngx_quic_qlog_loss_timer_updated(ngx_connection_t *c,
+    ngx_quic_connection_t *qc, const char *event_type,
+    const char *timer_type, ngx_msec_int_t delta)
+{
+    u_char           *p, *end;
+    ngx_quic_qlog_t  *qlog;
+
+    qlog = ngx_quic_qlog_start_event(qc->qlog, &p, &end,
+                                     NGX_QUIC_QLOG_LEVEL_EXTRA,
+                                     "recovery:loss_timer_updated");
+    if (qlog == NULL) {
+        return;
+    }
+
+    ngx_qlog_write_pair_str(p, end, "event_type", event_type);
+
+    if (timer_type) {
+        ngx_qlog_write_char(p, end, ',');
+        ngx_qlog_write_pair_str(p, end, "timer_type", timer_type);
+    }
+
+    if (delta >= 0) {
+        ngx_qlog_write_char(p, end, ',');
+        ngx_qlog_write_pair_num(p, end, "delta", (uint64_t) delta);
+    }
 
     ngx_qlog_write_literal(p, end, "}}\n");
 

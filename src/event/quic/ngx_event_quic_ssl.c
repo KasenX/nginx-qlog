@@ -248,6 +248,8 @@ ngx_quic_cbs_yield_secret(ngx_ssl_conn_t *ssl_conn, uint32_t ssl_level,
         return 1;
     }
 
+    ngx_quic_qlog_key_updated(c, qc, level, direction);
+
     if (direction) {
         qc->write_level = level;
 
@@ -372,6 +374,8 @@ ngx_quic_set_read_secret(ngx_ssl_conn_t *ssl_conn,
         != NGX_OK)
     {
         qc->error = NGX_QUIC_ERR_INTERNAL_ERROR;
+    } else {
+        ngx_quic_qlog_key_updated(c, qc, level, 0);
     }
 
     return 1;
@@ -404,6 +408,8 @@ ngx_quic_set_write_secret(ngx_ssl_conn_t *ssl_conn,
         != NGX_OK)
     {
         qc->error = NGX_QUIC_ERR_INTERNAL_ERROR;
+    } else {
+        ngx_quic_qlog_key_updated(c, qc, level, 1);
     }
 
     return 1;
@@ -444,6 +450,8 @@ ngx_quic_set_encryption_secrets(ngx_ssl_conn_t *ssl_conn,
         return 1;
     }
 
+    ngx_quic_qlog_key_updated(c, qc, level, 0);
+
     if (level == NGX_QUIC_ENCRYPTION_EARLY_DATA) {
         return 1;
     }
@@ -459,6 +467,8 @@ ngx_quic_set_encryption_secrets(ngx_ssl_conn_t *ssl_conn,
         != NGX_OK)
     {
         qc->error = NGX_QUIC_ERR_INTERNAL_ERROR;
+    } else {
+        ngx_quic_qlog_key_updated(c, qc, level, 1);
     }
 
     return 1;
@@ -692,8 +702,10 @@ static ngx_int_t
 ngx_quic_handshake(ngx_connection_t *c)
 {
     int                     n, sslerr;
+    unsigned int            alpn_len;
     ngx_ssl_conn_t         *ssl_conn;
     ngx_quic_frame_t       *frame;
+    const unsigned char    *alpn_data;
     ngx_quic_connection_t  *qc;
 
     qc = ngx_quic_get_connection(c);
@@ -750,6 +762,9 @@ ngx_quic_handshake(ngx_connection_t *c)
 #endif
 
     c->ssl->handshaked = 1;
+
+    SSL_get0_alpn_selected(ssl_conn, &alpn_data, &alpn_len);
+    ngx_quic_qlog_alpn_information(c, qc, (u_char *) alpn_data, alpn_len);
 
     frame = ngx_quic_alloc_frame(c);
     if (frame == NULL) {

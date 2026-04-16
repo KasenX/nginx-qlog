@@ -13,18 +13,6 @@
 
 #define NGX_QUIC_MAX_ACK_GAP                 2
 
-/* RFC 9002, 6.1.1. Packet Threshold: kPacketThreshold */
-#define NGX_QUIC_PKT_THR                     3 /* packets */
-/* RFC 9002, 6.1.2. Time Threshold: kGranularity */
-#define NGX_QUIC_TIME_GRANULARITY            1 /* ms */
-
-/* RFC 9002, 7.6.1. Duration: kPersistentCongestionThreshold */
-#define NGX_QUIC_PERSISTENT_CONGESTION_THR   3
-
-/* CUBIC parameters x10 */
-#define NGX_QUIC_CUBIC_BETA                  7
-#define NGX_QUIC_CUBIC_C                     4
-
 
 /* send time of ACK'ed packets */
 typedef struct {
@@ -447,6 +435,11 @@ ngx_quic_congestion_ack(ngx_connection_t *c, ngx_quic_frame_t *f)
                            now, cg->window, w_cubic, cg->in_flight);
         }
     }
+
+    ngx_quic_qlog_congestion_state_updated(c, qc,
+                                           cg->window < cg->ssthresh
+                                           ? NGX_QUIC_QLOG_CC_SLOW_START
+                                       : NGX_QUIC_QLOG_CC_CONGESTION_AVOIDANCE);
 
 done:
 
@@ -915,6 +908,7 @@ ngx_quic_congestion_lost(ngx_connection_t *c, ngx_quic_frame_t *f)
 
     cg->mtu = qc->path->mtu;
     cg->recovery_start = now;
+    ngx_quic_qlog_congestion_state_updated(c, qc, NGX_QUIC_QLOG_CC_RECOVERY);
     cg->w_prior = cg->window;
     /* RFC 9438, 4.7. Fast Convergence */
     cg->w_max = (cg->window < cg->w_max)
@@ -995,7 +989,7 @@ void
 ngx_quic_set_lost_timer(ngx_connection_t *c)
 {
     uint64_t                pkt_thr;
-    ngx_uint_t              i;
+    ngx_uint_t              i, was_set;
     ngx_msec_t              now;
     ngx_queue_t            *q;
     ngx_msec_int_t          lost, pto, w;
@@ -1049,6 +1043,8 @@ ngx_quic_set_lost_timer(ngx_connection_t *c)
         }
     }
 
+    was_set = qc->pto.timer_set;
+
     if (qc->pto.timer_set) {
         ngx_del_timer(&qc->pto);
     }
@@ -1059,6 +1055,7 @@ ngx_quic_set_lost_timer(ngx_connection_t *c)
 
         qc->pto.handler = ngx_quic_lost_handler;
         ngx_add_timer(&qc->pto, lost);
+        ngx_quic_qlog_loss_timer_updated(c, qc, "set", "ack", lost);
         return;
     }
 
@@ -1068,7 +1065,12 @@ ngx_quic_set_lost_timer(ngx_connection_t *c)
 
         qc->pto.handler = ngx_quic_pto_handler;
         ngx_add_timer(&qc->pto, pto);
+        ngx_quic_qlog_loss_timer_updated(c, qc, "set", "pto", pto);
         return;
+    }
+
+    if (was_set) {
+        ngx_quic_qlog_loss_timer_updated(c, qc, "cancelled", NULL, -1);
     }
 
     ngx_log_debug0(NGX_LOG_DEBUG_EVENT, c->log, 0, "quic lost timer unset");

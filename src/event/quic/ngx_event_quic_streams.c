@@ -8,6 +8,7 @@
 #include <ngx_core.h>
 #include <ngx_event.h>
 #include <ngx_event_quic_connection.h>
+#include <ngx_event_quic_qlog.h>
 
 
 #define NGX_QUIC_STREAM_GONE     (void *) -1
@@ -206,7 +207,11 @@ ngx_quic_close_streams(ngx_connection_t *c, ngx_quic_connection_t *qc)
         node = ngx_rbtree_next(tree, node);
         sc = qs->connection;
 
+        ngx_quic_qlog_stream_state_updated(c, qs, 0, qs->recv_state,
+                                           NGX_QUIC_STREAM_RECV_RESET_RECVD);
         qs->recv_state = NGX_QUIC_STREAM_RECV_RESET_RECVD;
+        ngx_quic_qlog_stream_state_updated(c, qs, 1, qs->send_state,
+                                           NGX_QUIC_STREAM_SEND_RESET_SENT);
         qs->send_state = NGX_QUIC_STREAM_SEND_RESET_SENT;
 
         if (sc == NULL) {
@@ -262,15 +267,17 @@ ngx_quic_do_reset_stream(ngx_quic_stream_t *qs, ngx_uint_t err)
         return NGX_OK;
     }
 
+    pc = qs->parent;
+    qc = ngx_quic_get_connection(pc);
+
+    ngx_quic_qlog_stream_state_updated(pc, qs, 1, qs->send_state,
+                                       NGX_QUIC_STREAM_SEND_RESET_SENT);
     qs->send_state = NGX_QUIC_STREAM_SEND_RESET_SENT;
     qs->send_final_size = qs->send_offset;
 
     if (qs->connection) {
         qs->connection->write->error = 1;
     }
-
-    pc = qs->parent;
-    qc = ngx_quic_get_connection(pc);
 
     ngx_log_debug1(NGX_LOG_DEBUG_EVENT, pc->log, 0,
                    "quic stream id:0x%xL reset", qs->id);
@@ -326,6 +333,11 @@ ngx_quic_shutdown_stream_send(ngx_connection_t *c)
         return NGX_OK;
     }
 
+    if (qs->send_state == NGX_QUIC_STREAM_SEND_READY) {
+        ngx_quic_qlog_stream_state_updated(qs->parent, qs, 1,
+                                           NGX_QUIC_STREAM_SEND_READY,
+                                           NGX_QUIC_STREAM_SEND_SEND);
+    }
     qs->send_state = NGX_QUIC_STREAM_SEND_SEND;
     qs->send_final_size = c->sent;
 
@@ -865,6 +877,11 @@ ngx_quic_stream_recv(ngx_connection_t *c, u_char *buf, size_t size)
     if (qs->recv_state == NGX_QUIC_STREAM_RECV_RESET_RECVD
         || qs->recv_state == NGX_QUIC_STREAM_RECV_RESET_READ)
     {
+        if (qs->recv_state == NGX_QUIC_STREAM_RECV_RESET_RECVD) {
+            ngx_quic_qlog_stream_state_updated(qs->parent, qs, 0,
+                                               NGX_QUIC_STREAM_RECV_RESET_RECVD,
+                                               NGX_QUIC_STREAM_RECV_RESET_READ);
+        }
         qs->recv_state = NGX_QUIC_STREAM_RECV_RESET_READ;
         return NGX_ERROR;
     }
@@ -897,6 +914,9 @@ ngx_quic_stream_recv(ngx_connection_t *c, u_char *buf, size_t size)
         if (qs->recv_state == NGX_QUIC_STREAM_RECV_DATA_RECVD
             && qs->recv_offset == qs->recv_final_size)
         {
+            ngx_quic_qlog_stream_state_updated(qs->parent, qs, 0,
+                                               NGX_QUIC_STREAM_RECV_DATA_RECVD,
+                                               NGX_QUIC_STREAM_RECV_DATA_READ);
             qs->recv_state = NGX_QUIC_STREAM_RECV_DATA_READ;
         }
 
@@ -969,6 +989,11 @@ ngx_quic_stream_send_chain(ngx_connection_t *c, ngx_chain_t *in, off_t limit)
         return NGX_CHAIN_ERROR;
     }
 
+    if (qs->send_state == NGX_QUIC_STREAM_SEND_READY) {
+        ngx_quic_qlog_stream_state_updated(pc, qs, 1,
+                                           NGX_QUIC_STREAM_SEND_READY,
+                                           NGX_QUIC_STREAM_SEND_SEND);
+    }
     qs->send_state = NGX_QUIC_STREAM_SEND_SEND;
 
     flow = qs->acked + qc->conf->stream_buffer_size - qs->sent;
@@ -1049,6 +1074,9 @@ ngx_quic_stream_flush(ngx_quic_stream_t *qs)
     if (qs->send_final_size != (uint64_t) -1
         && qs->send_final_size == qs->send.offset)
     {
+        ngx_quic_qlog_stream_state_updated(pc, qs, 1,
+                                           NGX_QUIC_STREAM_SEND_SEND,
+                                           NGX_QUIC_STREAM_SEND_DATA_SENT);
         qs->send_state = NGX_QUIC_STREAM_SEND_DATA_SENT;
         last = 1;
     }
@@ -1292,6 +1320,8 @@ ngx_quic_handle_stream_frame(ngx_connection_t *c, ngx_quic_header_t *pkt,
         }
 
         qs->recv_final_size = last;
+        ngx_quic_qlog_stream_state_updated(c, qs, 0, qs->recv_state,
+                                           NGX_QUIC_STREAM_RECV_SIZE_KNOWN);
         qs->recv_state = NGX_QUIC_STREAM_RECV_SIZE_KNOWN;
     }
 
@@ -1304,6 +1334,9 @@ ngx_quic_handle_stream_frame(ngx_connection_t *c, ngx_quic_header_t *pkt,
     if (qs->recv_state == NGX_QUIC_STREAM_RECV_SIZE_KNOWN
         && qs->recv.size == qs->recv_final_size)
     {
+        ngx_quic_qlog_stream_state_updated(c, qs, 0,
+                                           NGX_QUIC_STREAM_RECV_SIZE_KNOWN,
+                                           NGX_QUIC_STREAM_RECV_DATA_RECVD);
         qs->recv_state = NGX_QUIC_STREAM_RECV_DATA_RECVD;
     }
 
@@ -1481,6 +1514,8 @@ ngx_quic_handle_reset_stream_frame(ngx_connection_t *c,
         return NGX_OK;
     }
 
+    ngx_quic_qlog_stream_state_updated(c, qs, 0, qs->recv_state,
+                                       NGX_QUIC_STREAM_RECV_RESET_RECVD);
     qs->recv_state = NGX_QUIC_STREAM_RECV_RESET_RECVD;
 
     if (ngx_quic_control_flow(qs, f->final_size) != NGX_OK) {
@@ -1605,6 +1640,8 @@ ngx_quic_handle_stream_ack(ngx_connection_t *c, ngx_quic_frame_t *f)
             return;
         }
 
+        ngx_quic_qlog_stream_state_updated(c, qs, 1, qs->send_state,
+                                           NGX_QUIC_STREAM_SEND_RESET_RECVD);
         qs->send_state = NGX_QUIC_STREAM_SEND_RESET_RECVD;
 
         ngx_log_debug2(NGX_LOG_DEBUG_EVENT, c->log, 0,
@@ -1630,6 +1667,9 @@ ngx_quic_handle_stream_ack(ngx_connection_t *c, ngx_quic_frame_t *f)
         if (qs->send_state == NGX_QUIC_STREAM_SEND_DATA_SENT
             && qs->acked == qs->sent && qs->fin_acked)
         {
+            ngx_quic_qlog_stream_state_updated(c, qs, 1,
+                                               NGX_QUIC_STREAM_SEND_DATA_SENT,
+                                               NGX_QUIC_STREAM_SEND_DATA_RECVD);
             qs->send_state = NGX_QUIC_STREAM_SEND_DATA_RECVD;
         }
 

@@ -8,6 +8,7 @@
 #include <ngx_core.h>
 #include <ngx_event.h>
 #include <ngx_event_quic_connection.h>
+#include <ngx_event_quic_qlog.h>
 
 #define NGX_QUIC_MAX_SERVER_IDS   8
 
@@ -237,6 +238,7 @@ ngx_quic_retire_client_id(ngx_connection_t *c, ngx_quic_client_id_t *cid)
                 return NGX_ERROR;
             }
 
+            ngx_quic_qlog_cid_updated(c, qc, cid, new_cid);
             qc->path->cid = new_cid;
             new_cid->used = 1;
 
