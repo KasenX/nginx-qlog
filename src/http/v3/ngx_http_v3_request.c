@@ -8,6 +8,7 @@
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_http.h>
+#include <ngx_http_v3_qlog.h>
 
 
 static void ngx_http_v3_init_request_stream(ngx_connection_t *c);
@@ -597,6 +598,8 @@ ngx_http_v3_process_request(ngx_event_t *rev)
             if (ngx_http_v3_process_request_header(r) != NGX_OK) {
                 break;
             }
+
+            ngx_http_v3_qlog_frame_parsed_headers(r, st->frame_length);
 
             ngx_http_process_request(r);
             break;

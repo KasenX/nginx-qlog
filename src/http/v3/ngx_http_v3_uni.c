@@ -8,6 +8,7 @@
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_http.h>
+#include <ngx_http_v3_qlog.h>
 
 
 typedef struct {
@@ -104,9 +105,10 @@ ngx_http_v3_close_uni_stream(ngx_connection_t *c)
 ngx_int_t
 ngx_http_v3_register_uni_stream(ngx_connection_t *c, uint64_t type)
 {
-    ngx_int_t                  index;
-    ngx_http_v3_session_t     *h3c;
-    ngx_http_v3_uni_stream_t  *us;
+    ngx_int_t                       index;
+    ngx_http_v3_session_t          *h3c;
+    ngx_http_v3_uni_stream_t       *us;
+    ngx_http_v3_qlog_stream_type_e  qlog_type;
 
     h3c = ngx_http_v3_get_session(c);
 
@@ -117,6 +119,7 @@ ngx_http_v3_register_uni_stream(ngx_connection_t *c, uint64_t type)
         ngx_log_debug0(NGX_LOG_DEBUG_HTTP, c->log, 0,
                        "http3 encoder stream");
         index = NGX_HTTP_V3_STREAM_CLIENT_ENCODER;
+        qlog_type = NGX_HTTP_V3_QLOG_STREAM_QPACK_ENCODE;
         break;
 
     case NGX_HTTP_V3_STREAM_DECODER:
@@ -124,6 +127,7 @@ ngx_http_v3_register_uni_stream(ngx_connection_t *c, uint64_t type)
         ngx_log_debug0(NGX_LOG_DEBUG_HTTP, c->log, 0,
                        "http3 decoder stream");
         index = NGX_HTTP_V3_STREAM_CLIENT_DECODER;
+        qlog_type = NGX_HTTP_V3_QLOG_STREAM_QPACK_DECODE;
         break;
 
     case NGX_HTTP_V3_STREAM_CONTROL:
@@ -131,6 +135,7 @@ ngx_http_v3_register_uni_stream(ngx_connection_t *c, uint64_t type)
         ngx_log_debug0(NGX_LOG_DEBUG_HTTP, c->log, 0,
                        "http3 control stream");
         index = NGX_HTTP_V3_STREAM_CLIENT_CONTROL;
+        qlog_type = NGX_HTTP_V3_QLOG_STREAM_CONTROL;
 
         break;
 
@@ -148,7 +153,15 @@ ngx_http_v3_register_uni_stream(ngx_connection_t *c, uint64_t type)
         }
 
         index = -1;
+
+        if (type >= 0x21 && (type - 0x21) % 0x1f == 0) {
+            qlog_type = NGX_HTTP_V3_QLOG_STREAM_RESERVED;
+        } else {
+            qlog_type = NGX_HTTP_V3_QLOG_STREAM_UNKNOWN;
+        }
     }
+
+    ngx_http_v3_qlog_stream_type_set(c, c->quic->id, qlog_type);
 
     if (index >= 0) {
         if (h3c->known_streams[index]) {
@@ -394,7 +407,7 @@ ngx_int_t
 ngx_http_v3_send_settings(ngx_connection_t *c)
 {
     u_char                  *p, buf[NGX_HTTP_V3_VARLEN_INT_LEN * 6];
-    size_t                   n;
+    size_t                   n, frame_length;
     ngx_connection_t        *cc;
     ngx_http_v3_session_t   *h3c;
     ngx_http_v3_srv_conf_t  *h3scf;
@@ -413,6 +426,7 @@ ngx_http_v3_send_settings(ngx_connection_t *c)
     n += ngx_http_v3_encode_varlen_int(NULL, h3scf->max_table_capacity);
     n += ngx_http_v3_encode_varlen_int(NULL, NGX_HTTP_V3_PARAM_BLOCKED_STREAMS);
     n += ngx_http_v3_encode_varlen_int(NULL, h3scf->max_blocked_streams);
+    frame_length = n;
 
     p = (u_char *) ngx_http_v3_encode_varlen_int(buf,
                                                  NGX_HTTP_V3_FRAME_SETTINGS);
@@ -432,6 +446,13 @@ ngx_http_v3_send_settings(ngx_connection_t *c)
         goto failed;
     }
 
+    ngx_http_v3_qlog_frame_created_settings(c, cc->quic->id, frame_length,
+                                            h3scf->max_table_capacity,
+                                            h3scf->max_blocked_streams);
+
+    ngx_http_v3_qlog_parameters_set_local(c, h3scf->max_table_capacity,
+                                          h3scf->max_blocked_streams);
+
     return NGX_OK;
 
 failed:
@@ -450,7 +471,7 @@ ngx_int_t
 ngx_http_v3_send_goaway(ngx_connection_t *c, uint64_t id)
 {
     u_char                 *p, buf[NGX_HTTP_V3_VARLEN_INT_LEN * 3];
-    size_t                  n;
+    size_t                  n, frame_length;
     ngx_connection_t       *cc;
     ngx_http_v3_session_t  *h3c;
 
@@ -462,6 +483,7 @@ ngx_http_v3_send_goaway(ngx_connection_t *c, uint64_t id)
     }
 
     n = ngx_http_v3_encode_varlen_int(NULL, id);
+    frame_length = n;
     p = (u_char *) ngx_http_v3_encode_varlen_int(buf, NGX_HTTP_V3_FRAME_GOAWAY);
     p = (u_char *) ngx_http_v3_encode_varlen_int(p, n);
     p = (u_char *) ngx_http_v3_encode_varlen_int(p, id);
@@ -473,6 +495,8 @@ ngx_http_v3_send_goaway(ngx_connection_t *c, uint64_t id)
     if (cc->send(cc, buf, n) != (ssize_t) n) {
         goto failed;
     }
+
+    ngx_http_v3_qlog_frame_created_goaway(c, cc->quic->id, frame_length, id);
 
     return NGX_OK;
 

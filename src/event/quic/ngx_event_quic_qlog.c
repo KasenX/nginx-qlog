@@ -15,81 +15,6 @@
 #define NGX_QUIC_QLOG_OUT_BUF_SIZE  (8  * 1024)
 
 
-#define ngx_qlog_write_literal(p, end, s)                                    \
-    do {                                                                     \
-        size_t n = ((p) < (end)) ? (size_t) ((end) - (p)) : 0;               \
-        if (n > sizeof(s) - 1) {                                             \
-            n = sizeof(s) - 1;                                               \
-        }                                                                    \
-        (p) = ngx_cpymem(p, s, n);                                           \
-    } while (0)
-
-#define ngx_qlog_write(p, end, fmt, ...)                                     \
-    (p = ngx_slprintf(p, end, fmt, ##__VA_ARGS__))
-
-#define ngx_qlog_write_char(p, end, c)                                       \
-    do {                                                                     \
-        if ((p) < (end)) {                                                   \
-            *(p)++ = (c);                                                    \
-        }                                                                    \
-    } while (0)
-
-#define ngx_qlog_write_pair(p, end, key, fmt, ...)                           \
-    (p = ngx_slprintf(p, end, "\"%s\":" fmt, key, ##__VA_ARGS__))
-
-#define ngx_qlog_write_pair_num(p, end, key, val)                            \
-    ngx_qlog_write_pair(p, end, key, "%uL", (uint64_t)val)
-
-#define ngx_qlog_write_pair_bool(p, end, key, val)                           \
-    ngx_qlog_write_pair(p, end, key, "%s", (val) ? "true" : "false")
-
-#define ngx_qlog_write_pair_str(p, end, key, val)                            \
-    ngx_qlog_write_pair(p, end, key, "\"%s\"", val)
-
-#define ngx_qlog_write_pair_strv(p, end, key, val)                           \
-    ngx_qlog_write_pair(p, end, key, "\"%V\"", val)
-
-#define ngx_qlog_write_pair_hex(p, end, key, val, len)                       \
-    ngx_qlog_write_pair(p, end, key, "\"%*xs\"", (size_t) len, val)
-
-#define ngx_qlog_write_pair_duration(p, end, key, val)                       \
-    ngx_qlog_write_pair(p, end, key, "%M", val)
-
-
-struct ngx_quic_qlog_s {
-    ngx_fd_t                  fd;
-    ngx_str_t                 path;
-
-    u_char                   *buf;
-    u_char                   *last;
-    u_char                   *end;
-
-    ngx_log_t                *log;
-
-    ngx_msec_t                start_time;
-
-    ngx_uint_t                importance;
-
-    size_t                    bytes_written;
-    size_t                    max_size;
-
-    unsigned                  sent:1;
-    unsigned                  closed:1;
-
-    /* previous metrics for dedup */
-    ngx_msec_t                prev_min_rtt;
-    ngx_msec_t                prev_avg_rtt;
-    ngx_msec_t                prev_latest_rtt;
-    ngx_msec_t                prev_rttvar;
-    ngx_uint_t                prev_pto_count;
-    size_t                    prev_cwnd;
-    size_t                    prev_in_flight;
-    size_t                    prev_ssthresh;
-
-    ngx_quic_qlog_cc_state_e  prev_cc_state;
-};
-
-
 /*
  * Per-worker shared buffers for qlog output.
  *
@@ -118,15 +43,11 @@ static void ngx_quic_qlog_write_start(ngx_quic_connection_t *qc,
     ngx_uint_t sent);
 static void ngx_quic_qlog_write_end(ngx_connection_t *c,
     ngx_quic_connection_t *qc, ngx_quic_header_t *pkt, uint64_t pkt_number);
-static ngx_int_t ngx_quic_qlog_write(ngx_quic_qlog_t *qlog, u_char *buf,
-    size_t size);
 static ngx_int_t ngx_quic_qlog_flush(ngx_quic_qlog_t *qlog);
 static ngx_int_t ngx_quic_qlog_write_fd(ngx_quic_qlog_t *qlog, u_char *buf,
     size_t size);
 static ngx_int_t ngx_quic_qlog_write_header(ngx_connection_t *c,
     ngx_quic_connection_t *qc, uint64_t reference_time_ms);
-static ngx_quic_qlog_t * ngx_quic_qlog_start_event(ngx_quic_qlog_t *qlog,
-    u_char **pp, u_char **pend, ngx_uint_t min_importance, const char *name);
 static const char *ngx_quic_qlog_packet_name(uint8_t flags);
 static const char *ngx_quic_qlog_packet_name_by_level(ngx_uint_t level);
 static u_char *ngx_quic_qlog_padding_frame(u_char *p, u_char *end,
@@ -1066,6 +987,61 @@ ngx_quic_qlog_write_frame(ngx_quic_connection_t *qc, ngx_quic_frame_t *f)
 }
 
 
+ngx_quic_qlog_t *
+ngx_quic_qlog_start_event(ngx_quic_qlog_t *qlog, u_char **pp, u_char **pend,
+    ngx_uint_t min_importance, const char *name)
+{
+    if (qlog == NULL || qlog->closed || qlog->importance < min_importance) {
+        return NULL;
+    }
+
+    *pp = qlog->last;
+    *pend = qlog->end;
+    ngx_qlog_write(*pp, *pend, "\x1e{\"time\":%uL,\"name\":\"%s\",\"data\":{",
+                   (uint64_t) (ngx_current_msec - qlog->start_time), name);
+
+    return qlog;
+}
+
+
+ngx_int_t
+ngx_quic_qlog_write(ngx_quic_qlog_t *qlog, u_char *buf, size_t size)
+{
+    /* if the output buffer belongs to a different qlog, flush it first */
+
+    if (ngx_quic_qlog_out_owner != qlog) {
+        if (ngx_quic_qlog_out_owner != NULL) {
+            (void) ngx_quic_qlog_flush(ngx_quic_qlog_out_owner);
+        }
+        ngx_quic_qlog_out_owner = qlog;
+    }
+
+    /* fits in the remaining output buffer space */
+
+    if (size <= (size_t) (ngx_quic_qlog_out_end - ngx_quic_qlog_out_last)) {
+        ngx_quic_qlog_out_last = ngx_cpymem(ngx_quic_qlog_out_last, buf, size);
+        return NGX_OK;
+    }
+
+    /* buffer is full, flush it */
+
+    if (ngx_quic_qlog_flush(qlog) != NGX_OK) {
+        return NGX_ERROR;
+    }
+
+    ngx_quic_qlog_out_owner = qlog;
+
+    /* event larger than the whole output buffer: write directly */
+
+    if (size > (size_t) (ngx_quic_qlog_out_end - ngx_quic_qlog_out_buf)) {
+        return ngx_quic_qlog_write_fd(qlog, buf, size);
+    }
+
+    ngx_quic_qlog_out_last = ngx_cpymem(ngx_quic_qlog_out_last, buf, size);
+    return NGX_OK;
+}
+
+
 static void
 ngx_quic_qlog_write_start(ngx_quic_connection_t *qc, ngx_uint_t sent)
 {
@@ -1124,44 +1100,6 @@ ngx_quic_qlog_write_end(ngx_connection_t *c, ngx_quic_connection_t *qc,
     ngx_quic_qlog_write(qlog, qlog->buf, size);
 
     qlog->last = qlog->buf;
-}
-
-
-static ngx_int_t
-ngx_quic_qlog_write(ngx_quic_qlog_t *qlog, u_char *buf, size_t size)
-{
-    /* if the output buffer belongs to a different qlog, flush it first */
-
-    if (ngx_quic_qlog_out_owner != qlog) {
-        if (ngx_quic_qlog_out_owner != NULL) {
-            (void) ngx_quic_qlog_flush(ngx_quic_qlog_out_owner);
-        }
-        ngx_quic_qlog_out_owner = qlog;
-    }
-
-    /* fits in the remaining output buffer space */
-
-    if (size <= (size_t) (ngx_quic_qlog_out_end - ngx_quic_qlog_out_last)) {
-        ngx_quic_qlog_out_last = ngx_cpymem(ngx_quic_qlog_out_last, buf, size);
-        return NGX_OK;
-    }
-
-    /* buffer is full, flush it */
-
-    if (ngx_quic_qlog_flush(qlog) != NGX_OK) {
-        return NGX_ERROR;
-    }
-
-    ngx_quic_qlog_out_owner = qlog;
-
-    /* event larger than the whole output buffer: write directly */
-
-    if (size > (size_t) (ngx_quic_qlog_out_end - ngx_quic_qlog_out_buf)) {
-        return ngx_quic_qlog_write_fd(qlog, buf, size);
-    }
-
-    ngx_quic_qlog_out_last = ngx_cpymem(ngx_quic_qlog_out_last, buf, size);
-    return NGX_OK;
 }
 
 
@@ -1342,23 +1280,6 @@ ngx_quic_qlog_write_header(ngx_connection_t *c, ngx_quic_connection_t *qc,
                            "\"type\":\"server\"}}}\n");
 
     return ngx_quic_qlog_write(qc->qlog, qc->qlog->last, p - qc->qlog->last);
-}
-
-
-static ngx_quic_qlog_t *
-ngx_quic_qlog_start_event(ngx_quic_qlog_t *qlog, u_char **pp, u_char **pend,
-    ngx_uint_t min_importance, const char *name)
-{
-    if (qlog == NULL || qlog->closed || qlog->importance < min_importance) {
-        return NULL;
-    }
-
-    *pp = qlog->last;
-    *pend = qlog->end;
-    ngx_qlog_write(*pp, *pend, "\x1e{\"time\":%uL,\"name\":\"%s\",\"data\":{",
-                   (uint64_t) (ngx_current_msec - qlog->start_time), name);
-
-    return qlog;
 }
 
 

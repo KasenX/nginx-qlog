@@ -30,6 +30,7 @@ typedef struct {
 typedef struct {
     ngx_uint_t                      state;
     uint64_t                        id;
+    ngx_array_t                    *qlog_settings;
     ngx_http_v3_parse_varlen_int_t  vlint;
 } ngx_http_v3_parse_settings_t;
 
@@ -79,6 +80,7 @@ typedef struct {
     ngx_uint_t                      state;
     ngx_uint_t                      type;
     ngx_uint_t                      length;
+    ngx_uint_t                      frame_length; /* original length for qlog */
     ngx_http_v3_parse_varlen_int_t  vlint;
     ngx_http_v3_parse_field_section_prefix_t  prefix;
     ngx_http_v3_parse_field_rep_t   field_rep;
@@ -102,6 +104,7 @@ typedef struct {
     ngx_uint_t                      state;
     ngx_uint_t                      type;
     ngx_uint_t                      length;
+    ngx_uint_t                      frame_length; /* original length for qlog */
     ngx_http_v3_parse_varlen_int_t  vlint;
     ngx_http_v3_parse_settings_t    settings;
 } ngx_http_v3_parse_control_t;

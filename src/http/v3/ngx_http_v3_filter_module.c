@@ -8,6 +8,7 @@
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_http.h>
+#include <ngx_http_v3_qlog.h>
 
 
 /* static table indices */
@@ -563,6 +564,10 @@ ngx_http_v3_header_filter(ngx_http_request_t *r)
         h3c->payload_bytes += r->headers_out.content_length_n;
         h3c->total_bytes += r->headers_out.content_length_n;
 
+        ngx_http_v3_qlog_frame_created_data(r->connection,
+                                            r->connection->quic->id,
+                                            r->headers_out.content_length_n);
+
         cl = ngx_alloc_chain_link(r->pool);
         if (cl == NULL) {
             return NGX_ERROR;
@@ -586,6 +591,8 @@ ngx_http_v3_header_filter(ngx_http_request_t *r)
         h3c->total_bytes += cl->buf->last - cl->buf->pos;
         r->header_size += cl->buf->last - cl->buf->pos;
     }
+
+    ngx_http_v3_qlog_frame_created_headers(r, n);
 
     return ngx_http_write_filter(r, out);
 }
@@ -731,6 +738,8 @@ ngx_http_v3_early_hints_filter(ngx_http_request_t *r)
         r->header_size += cl->buf->last - cl->buf->pos;
     }
 
+    ngx_http_v3_qlog_frame_created_headers(r, n);
+
     return ngx_http_write_filter(r, out);
 }
 
@@ -823,6 +832,9 @@ ngx_http_v3_body_filter(ngx_http_request_t *r, ngx_chain_t *in)
         out = tl;
 
         h3c->payload_bytes += size;
+
+        ngx_http_v3_qlog_frame_created_data(r->connection,
+                                            r->connection->quic->id, size);
     }
 
     if (cl->buf->last_buf) {

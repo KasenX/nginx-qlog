@@ -450,7 +450,8 @@ if [ $HTTP = YES ]; then
                          src/http/v3/ngx_http_v3_encode.h \
                          src/http/v3/ngx_http_v3_parse.h \
                          src/http/v3/ngx_http_v3_table.h \
-                         src/http/v3/ngx_http_v3_uni.h"
+                         src/http/v3/ngx_http_v3_uni.h \
+                         src/http/v3/ngx_http_v3_qlog.h"
         ngx_module_srcs="src/http/v3/ngx_http_v3.c \
                          src/http/v3/ngx_http_v3_encode.c \
                          src/http/v3/ngx_http_v3_parse.c \
@@ -458,6 +459,12 @@ if [ $HTTP = YES ]; then
                          src/http/v3/ngx_http_v3_uni.c \
                          src/http/v3/ngx_http_v3_request.c \
                          src/http/v3/ngx_http_v3_module.c"
+
+        if [ $QUIC_QLOG = YES ]; then
+            ngx_module_srcs="$ngx_module_srcs \
+                             src/http/v3/ngx_http_v3_qlog.c"
+        fi
+
         ngx_module_libs=
         ngx_module_link=$HTTP_V3
 

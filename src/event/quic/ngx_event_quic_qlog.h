@@ -34,7 +34,80 @@ typedef enum {
 
 #if (NGX_QUIC_QLOG)
 
-typedef struct ngx_quic_qlog_s  ngx_quic_qlog_t;
+
+struct ngx_quic_qlog_s {
+    ngx_fd_t                  fd;
+    ngx_str_t                 path;
+
+    u_char                   *buf;
+    u_char                   *last;
+    u_char                   *end;
+
+    ngx_log_t                *log;
+
+    ngx_msec_t                start_time;
+
+    ngx_uint_t                importance;
+
+    size_t                    bytes_written;
+    size_t                    max_size;
+
+    unsigned                  sent:1;
+    unsigned                  closed:1;
+
+    /* previous metrics for dedup */
+    ngx_msec_t                prev_min_rtt;
+    ngx_msec_t                prev_avg_rtt;
+    ngx_msec_t                prev_latest_rtt;
+    ngx_msec_t                prev_rttvar;
+    ngx_uint_t                prev_pto_count;
+    size_t                    prev_cwnd;
+    size_t                    prev_in_flight;
+    size_t                    prev_ssthresh;
+
+    ngx_quic_qlog_cc_state_e  prev_cc_state;
+};
+
+
+#define ngx_qlog_write_literal(p, end, s)                                    \
+    do {                                                                     \
+        size_t n = ((p) < (end)) ? (size_t) ((end) - (p)) : 0;               \
+        if (n > sizeof(s) - 1) {                                             \
+            n = sizeof(s) - 1;                                               \
+        }                                                                    \
+        (p) = ngx_cpymem(p, s, n);                                           \
+    } while (0)
+
+#define ngx_qlog_write(p, end, fmt, ...)                                     \
+    (p = ngx_slprintf(p, end, fmt, ##__VA_ARGS__))
+
+#define ngx_qlog_write_char(p, end, c)                                       \
+    do {                                                                     \
+        if ((p) < (end)) {                                                   \
+            *(p)++ = (c);                                                    \
+        }                                                                    \
+    } while (0)
+
+#define ngx_qlog_write_pair(p, end, key, fmt, ...)                           \
+    (p = ngx_slprintf(p, end, "\"%s\":" fmt, key, ##__VA_ARGS__))
+
+#define ngx_qlog_write_pair_num(p, end, key, val)                            \
+    ngx_qlog_write_pair(p, end, key, "%uL", (uint64_t)val)
+
+#define ngx_qlog_write_pair_bool(p, end, key, val)                           \
+    ngx_qlog_write_pair(p, end, key, "%s", (val) ? "true" : "false")
+
+#define ngx_qlog_write_pair_str(p, end, key, val)                            \
+    ngx_qlog_write_pair(p, end, key, "\"%s\"", val)
+
+#define ngx_qlog_write_pair_strv(p, end, key, val)                           \
+    ngx_qlog_write_pair(p, end, key, "\"%V\"", val)
+
+#define ngx_qlog_write_pair_hex(p, end, key, val, len)                       \
+    ngx_qlog_write_pair(p, end, key, "\"%*xs\"", (size_t) len, val)
+
+#define ngx_qlog_write_pair_duration(p, end, key, val)                       \
+    ngx_qlog_write_pair(p, end, key, "%M", val)
 
 
 ngx_int_t ngx_quic_qlog_init(ngx_connection_t *c, ngx_quic_connection_t *qc);
@@ -87,6 +160,11 @@ void ngx_quic_qlog_pkt_sent_start(ngx_connection_t *c,
 void ngx_quic_qlog_pkt_sent_end(ngx_connection_t *c, ngx_quic_connection_t *qc,
     ngx_quic_header_t *pkt);
 void ngx_quic_qlog_write_frame(ngx_quic_connection_t *qc, ngx_quic_frame_t *f);
+
+ngx_quic_qlog_t *ngx_quic_qlog_start_event(ngx_quic_qlog_t *qlog,
+    u_char **pp, u_char **pend, ngx_uint_t min_importance,
+    const char *name);
+ngx_int_t ngx_quic_qlog_write(ngx_quic_qlog_t *qlog, u_char *buf, size_t size);
 
 #else /* NGX_QUIC_QLOG */
 

@@ -8,6 +8,7 @@
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_http.h>
+#include <ngx_http_v3_qlog.h>
 
 
 #define ngx_http_v3_is_v2_frame(type)                                         \
@@ -283,8 +284,12 @@ ngx_http_v3_parse_headers(ngx_connection_t *c, ngx_http_v3_parse_headers_t *st,
 
             st->type = st->vlint.value;
 
-            if (ngx_http_v3_is_v2_frame(st->type)
-                || st->type == NGX_HTTP_V3_FRAME_DATA
+            if (ngx_http_v3_is_v2_frame(st->type)) {
+                ngx_http_v3_qlog_frame_parsed_reserved(c, c->quic->id);
+                return NGX_HTTP_V3_ERR_FRAME_UNEXPECTED;
+            }
+
+            if (st->type == NGX_HTTP_V3_FRAME_DATA
                 || st->type == NGX_HTTP_V3_FRAME_GOAWAY
                 || st->type == NGX_HTTP_V3_FRAME_SETTINGS
                 || st->type == NGX_HTTP_V3_FRAME_MAX_PUSH_ID
@@ -305,12 +310,15 @@ ngx_http_v3_parse_headers(ngx_connection_t *c, ngx_http_v3_parse_headers_t *st,
             }
 
             st->length = st->vlint.value;
+            st->frame_length = st->vlint.value;
 
             ngx_log_debug2(NGX_LOG_DEBUG_HTTP, c->log, 0,
                            "http3 parse headers type:%ui, len:%ui",
                            st->type, st->length);
 
             if (st->type != NGX_HTTP_V3_FRAME_HEADERS) {
+                ngx_http_v3_qlog_frame_parsed_unknown(c, c->quic->id,
+                                                      st->length, st->type);
                 st->state = st->length > 0 ? sw_skip : sw_type;
                 break;
             }
@@ -1185,6 +1193,8 @@ ngx_http_v3_parse_control(ngx_connection_t *c, ngx_http_v3_parse_control_t *st,
         sw_type,
         sw_length,
         sw_settings,
+        sw_goaway,
+        sw_max_push_id,
         sw_skip
     };
 
@@ -1226,8 +1236,12 @@ ngx_http_v3_parse_control(ngx_connection_t *c, ngx_http_v3_parse_control_t *st,
                 return NGX_HTTP_V3_ERR_FRAME_UNEXPECTED;
             }
 
-            if (ngx_http_v3_is_v2_frame(st->type)
-                || st->type == NGX_HTTP_V3_FRAME_DATA
+            if (ngx_http_v3_is_v2_frame(st->type)) {
+                ngx_http_v3_qlog_frame_parsed_reserved(c, c->quic->id);
+                return NGX_HTTP_V3_ERR_FRAME_UNEXPECTED;
+            }
+
+            if (st->type == NGX_HTTP_V3_FRAME_DATA
                 || st->type == NGX_HTTP_V3_FRAME_HEADERS
                 || st->type == NGX_HTTP_V3_FRAME_PUSH_PROMISE)
             {
@@ -1252,7 +1266,22 @@ ngx_http_v3_parse_control(ngx_connection_t *c, ngx_http_v3_parse_control_t *st,
                            "http3 parse frame len:%uL", st->vlint.value);
 
             st->length = st->vlint.value;
+            st->frame_length = st->vlint.value;
+
             if (st->length == 0) {
+                if (st->type == NGX_HTTP_V3_FRAME_SETTINGS) {
+                    ngx_http_v3_qlog_frame_parsed_settings(c, c->quic->id,
+                                                           st->frame_length,
+                                                           NULL);
+
+                } else if (st->type != NGX_HTTP_V3_FRAME_GOAWAY
+                           && st->type != NGX_HTTP_V3_FRAME_MAX_PUSH_ID)
+                {
+                    ngx_http_v3_qlog_frame_parsed_unknown(c, c->quic->id,
+                                                          st->length,
+                                                          st->type);
+                }
+
                 st->state = sw_type;
                 break;
             }
@@ -1260,10 +1289,26 @@ ngx_http_v3_parse_control(ngx_connection_t *c, ngx_http_v3_parse_control_t *st,
             switch (st->type) {
 
             case NGX_HTTP_V3_FRAME_SETTINGS:
+                st->settings.qlog_settings = ngx_array_create(c->pool, 2,
+                                        sizeof(ngx_http_v3_qlog_setting_t));
+                if (st->settings.qlog_settings == NULL) {
+                    return NGX_ERROR;
+                }
+
                 st->state = sw_settings;
                 break;
 
+            case NGX_HTTP_V3_FRAME_GOAWAY:
+                st->state = sw_goaway;
+                break;
+
+            case NGX_HTTP_V3_FRAME_MAX_PUSH_ID:
+                st->state = sw_max_push_id;
+                break;
+
             default:
+                ngx_http_v3_qlog_frame_parsed_unknown(c, c->quic->id,
+                                                      st->length, st->type);
                 ngx_log_debug0(NGX_LOG_DEBUG_HTTP, c->log, 0,
                                "http3 parse skip unknown frame");
                 st->state = sw_skip;
@@ -1288,9 +1333,59 @@ ngx_http_v3_parse_control(ngx_connection_t *c, ngx_http_v3_parse_control_t *st,
             }
 
             if (st->length == 0) {
+                ngx_http_v3_qlog_frame_parsed_settings(c, c->quic->id,
+                                                       st->frame_length,
+                                                       st->settings.qlog_settings);
+                st->settings.qlog_settings = NULL;
                 st->state = sw_type;
             }
 
+            break;
+
+        case sw_goaway:
+
+            ngx_http_v3_parse_start_local(b, &loc, st->length);
+
+            rc = ngx_http_v3_parse_varlen_int(c, &st->vlint, &loc);
+
+            ngx_http_v3_parse_end_local(b, &loc, &st->length);
+
+            if (st->length == 0 && rc == NGX_AGAIN) {
+                return NGX_HTTP_V3_ERR_FRAME_ERROR;
+            }
+
+            if (rc != NGX_DONE) {
+                return rc;
+            }
+
+            ngx_http_v3_qlog_frame_parsed_goaway(c, c->quic->id,
+                ngx_http_v3_encode_varlen_int(NULL, st->vlint.value),
+                st->vlint.value);
+
+            st->state = sw_type;
+            break;
+
+        case sw_max_push_id:
+
+            ngx_http_v3_parse_start_local(b, &loc, st->length);
+
+            rc = ngx_http_v3_parse_varlen_int(c, &st->vlint, &loc);
+
+            ngx_http_v3_parse_end_local(b, &loc, &st->length);
+
+            if (st->length == 0 && rc == NGX_AGAIN) {
+                return NGX_HTTP_V3_ERR_FRAME_ERROR;
+            }
+
+            if (rc != NGX_DONE) {
+                return rc;
+            }
+
+            ngx_http_v3_qlog_frame_parsed_max_push_id(c, c->quic->id,
+                ngx_http_v3_encode_varlen_int(NULL, st->vlint.value),
+                st->vlint.value);
+
+            st->state = sw_type;
             break;
 
         case sw_skip:
@@ -1311,7 +1406,8 @@ static ngx_int_t
 ngx_http_v3_parse_settings(ngx_connection_t *c,
     ngx_http_v3_parse_settings_t *st, ngx_buf_t *b)
 {
-    ngx_int_t  rc;
+    ngx_int_t                    rc;
+    ngx_http_v3_qlog_setting_t  *setting;
     enum {
         sw_start = 0,
         sw_id,
@@ -1347,6 +1443,16 @@ ngx_http_v3_parse_settings(ngx_connection_t *c,
             rc = ngx_http_v3_parse_varlen_int(c, &st->vlint, b);
             if (rc != NGX_DONE) {
                 return rc;
+            }
+
+            if (st->qlog_settings != NULL) {
+                setting = ngx_array_push(st->qlog_settings);
+                if (setting == NULL) {
+                    return NGX_ERROR;
+                }
+
+                setting->id = st->id;
+                setting->value = st->vlint.value;
             }
 
             if (ngx_http_v3_set_param(c, st->id, st->vlint.value) != NGX_OK) {
@@ -1834,8 +1940,12 @@ ngx_http_v3_parse_data(ngx_connection_t *c, ngx_http_v3_parse_data_t *st,
                 goto done;
             }
 
-            if (ngx_http_v3_is_v2_frame(st->type)
-                || st->type == NGX_HTTP_V3_FRAME_GOAWAY
+            if (ngx_http_v3_is_v2_frame(st->type)) {
+                ngx_http_v3_qlog_frame_parsed_reserved(c, c->quic->id);
+                return NGX_HTTP_V3_ERR_FRAME_UNEXPECTED;
+            }
+
+            if (st->type == NGX_HTTP_V3_FRAME_GOAWAY
                 || st->type == NGX_HTTP_V3_FRAME_SETTINGS
                 || st->type == NGX_HTTP_V3_FRAME_MAX_PUSH_ID
                 || st->type == NGX_HTTP_V3_FRAME_CANCEL_PUSH
@@ -1860,9 +1970,17 @@ ngx_http_v3_parse_data(ngx_connection_t *c, ngx_http_v3_parse_data_t *st,
                            "http3 parse data type:%ui, len:%ui",
                            st->type, st->length);
 
-            if (st->type != NGX_HTTP_V3_FRAME_DATA && st->length > 0) {
-                st->state = sw_skip;
-                break;
+            if (st->type == NGX_HTTP_V3_FRAME_DATA) {
+                ngx_http_v3_qlog_frame_parsed_data(c, c->quic->id, st->length);
+
+            } else {
+                ngx_http_v3_qlog_frame_parsed_unknown(c, c->quic->id,
+                                                      st->length, st->type);
+
+                if (st->length > 0) {
+                    st->state = sw_skip;
+                    break;
+                }
             }
 
             st->state = sw_type;

@@ -8,6 +8,7 @@
 #include <ngx_config.h>
 #include <ngx_core.h>
 #include <ngx_http.h>
+#include <ngx_http_v3_qlog.h>
 
 
 #define ngx_http_v3_table_entry_size(n, v) ((n)->len + (v)->len + 32)
@@ -732,6 +733,8 @@ ngx_http_v3_set_param(ngx_connection_t *c, uint64_t id, uint64_t value)
         ngx_log_debug2(NGX_LOG_DEBUG_HTTP, c->log, 0,
                        "http3 param #%uL:%uL", id, value);
     }
+
+    ngx_http_v3_qlog_parameters_set_remote(c, id, value);
 
     return NGX_OK;
 }
