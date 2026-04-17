@@ -12,7 +12,6 @@
 
 
 #define NGX_QUIC_QLOG_BUF_SIZE      (16 * 1024)
-#define NGX_QUIC_QLOG_OUT_BUF_SIZE  (8  * 1024)
 
 
 #define ngx_qlog_write_literal(p, end, s)                                    \
@@ -89,24 +88,11 @@ struct ngx_quic_qlog_s {
 
 
 /*
- * Per-worker shared buffers for qlog output.
- *
- * ngx_quic_qlog_buf/end: scratch buffer used by each connection to format
- * a single event before copying to the output buffer.
- *
- * ngx_quic_qlog_out_buf/end/last: output buffer that accumulates events
- * before flushing to disk.  Only one connection "owns" this buffer at a time,
- * tracked by ngx_quic_qlog_out_owner.  When a different connection needs to
- * write, the current owner's pending data is flushed first.
+ * Per-worker shared scratch buffer for qlog event formatting.
  */
 
 static u_char *ngx_quic_qlog_buf;
 static u_char *ngx_quic_qlog_end;
-static u_char *ngx_quic_qlog_out_buf;
-static u_char *ngx_quic_qlog_out_end;
-static u_char *ngx_quic_qlog_out_last;
-
-static ngx_quic_qlog_t *ngx_quic_qlog_out_owner;
 
 
 static ngx_int_t ngx_quic_qlog_init_worker_buffers(void);
@@ -738,62 +724,14 @@ ngx_quic_qlog_write_end(ngx_connection_t *c, ngx_quic_connection_t *qc,
 static ngx_int_t
 ngx_quic_qlog_write(ngx_quic_qlog_t *qlog, u_char *buf, size_t size)
 {
-    /* if the output buffer belongs to a different qlog, flush it first */
-
-    if (ngx_quic_qlog_out_owner != qlog) {
-        if (ngx_quic_qlog_out_owner != NULL) {
-            (void) ngx_quic_qlog_flush(ngx_quic_qlog_out_owner);
-        }
-        ngx_quic_qlog_out_owner = qlog;
-    }
-
-    /* fits in the remaining output buffer space */
-
-    if (size <= (size_t) (ngx_quic_qlog_out_end - ngx_quic_qlog_out_last)) {
-        ngx_quic_qlog_out_last = ngx_cpymem(ngx_quic_qlog_out_last, buf, size);
-        return NGX_OK;
-    }
-
-    /* buffer is full, flush it */
-
-    if (ngx_quic_qlog_flush(qlog) != NGX_OK) {
-        return NGX_ERROR;
-    }
-
-    ngx_quic_qlog_out_owner = qlog;
-
-    /* event larger than the whole output buffer: write directly */
-
-    if (size > (size_t) (ngx_quic_qlog_out_end - ngx_quic_qlog_out_buf)) {
-        return ngx_quic_qlog_write_fd(qlog, buf, size);
-    }
-
-    ngx_quic_qlog_out_last = ngx_cpymem(ngx_quic_qlog_out_last, buf, size);
-    return NGX_OK;
+    return ngx_quic_qlog_write_fd(qlog, buf, size);
 }
 
 
 static ngx_int_t
 ngx_quic_qlog_flush(ngx_quic_qlog_t *qlog)
 {
-    ngx_int_t  rc;
-
-    if (ngx_quic_qlog_out_owner != qlog) {
-        return NGX_OK;
-    }
-
-    rc = NGX_OK;
-
-    if (ngx_quic_qlog_out_last > ngx_quic_qlog_out_buf) {
-        rc = ngx_quic_qlog_write_fd(qlog, ngx_quic_qlog_out_buf,
-                                    ngx_quic_qlog_out_last
-                                    - ngx_quic_qlog_out_buf);
-        ngx_quic_qlog_out_last = ngx_quic_qlog_out_buf;
-    }
-
-    ngx_quic_qlog_out_owner = NULL;
-
-    return rc;
+    return NGX_OK;
 }
 
 
@@ -844,7 +782,7 @@ ngx_quic_qlog_write_fd(ngx_quic_qlog_t *qlog, u_char *buf, size_t size)
 static ngx_int_t
 ngx_quic_qlog_init_worker_buffers(void)
 {
-    if (ngx_quic_qlog_buf != NULL && ngx_quic_qlog_out_buf != NULL) {
+    if (ngx_quic_qlog_buf != NULL) {
         return NGX_OK;
     }
 
@@ -860,17 +798,7 @@ ngx_quic_qlog_init_worker_buffers(void)
         }
     }
 
-    if (ngx_quic_qlog_out_buf == NULL) {
-        ngx_quic_qlog_out_buf = ngx_palloc(ngx_cycle->pool,
-                                           NGX_QUIC_QLOG_OUT_BUF_SIZE);
-        if (ngx_quic_qlog_out_buf == NULL) {
-            return NGX_ERROR;
-        }
-    }
-
     ngx_quic_qlog_end = ngx_quic_qlog_buf + NGX_QUIC_QLOG_BUF_SIZE;
-    ngx_quic_qlog_out_end = ngx_quic_qlog_out_buf + NGX_QUIC_QLOG_OUT_BUF_SIZE;
-    ngx_quic_qlog_out_last = ngx_quic_qlog_out_buf;
 
     return NGX_OK;
 }
